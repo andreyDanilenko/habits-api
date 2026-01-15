@@ -17,11 +17,11 @@ func NewHandler(service *auth.Service) *Handler {
 }
 
 func (h *Handler) RegisterRoutes(r *gin.RouterGroup) {
-	r.POST("/login", h.Login)
-	r.POST("/register", h.Register)
-	r.POST("/logout", h.Logout)
-	r.POST("/refresh", h.Refresh)
-	r.GET("/me", h.Me)
+	r.POST(RouteLogin, h.Login)
+	r.POST(RouteRegister, h.Register)
+	r.POST(RouteLogout, h.Logout)
+	r.POST(RouteRefresh, h.Refresh)
+	r.GET(RouteMe, h.Me)
 }
 
 func (h *Handler) Login(c *gin.Context) {
