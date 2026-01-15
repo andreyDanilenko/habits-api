@@ -7,7 +7,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// ErrorResponse представляет структуру ответа с ошибкой
 type ErrorResponse struct {
 	Status    string      `json:"status"`
 	Error     string      `json:"error"`
@@ -16,14 +15,11 @@ type ErrorResponse struct {
 	Details   interface{} `json:"details,omitempty"`
 }
 
-// WriteError отправляет ответ с ошибкой
 func WriteError(c *gin.Context, statusCode int, message string) {
 	WriteErrorWithCode(c, statusCode, http.StatusText(statusCode), message, nil)
 }
 
-// WriteErrorWithCode отправляет ответ с ошибкой, включая код ошибки и детали
 func WriteErrorWithCode(c *gin.Context, statusCode int, errorCode, message string, details interface{}) {
-	// Логируем внутренние ошибки (5xx)
 	if statusCode >= 500 {
 		log.Printf("internal error [%d]: %s - %s", statusCode, errorCode, message)
 	}

@@ -11,7 +11,6 @@ import (
 	"backend/internal/config"
 )
 
-// RunMigrations применяет все миграции к базе данных
 func RunMigrations(db config.DatabaseConfig) error {
 	dsn := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable",
 		db.User,
