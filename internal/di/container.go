@@ -86,25 +86,26 @@ func (c *Container) RegisterRoutes(r *router.Router) {
 
 	// Health check
 	r.GET("/health", HealthCheck)
+	apiV1 := r.Group("/api/v1")
 
 	// Auth routes
-	authGroup := r.Group("/auth")
+	authGroup := apiV1.Group("/auth")
 	c.AuthHandler.RegisterRoutes(authGroup)
 
 	// Workspace routes
-	workspaceGroup := r.Group("/workspaces")
+	workspaceGroup := apiV1.Group("/workspaces")
 	c.WorkspaceHandler.RegisterRoutes(workspaceGroup)
 
 	// Habits routes
-	habitsGroup := r.Group("/habits")
+	habitsGroup := apiV1.Group("/habits")
 	c.HabitsHandler.RegisterRoutes(habitsGroup)
 
 	// Journal routes
-	journalGroup := r.Group("/journal")
+	journalGroup := apiV1.Group("/journal")
 	c.JournalHandler.RegisterRoutes(journalGroup)
 
 	// Logger routes
-	loggerGroup := r.Group("/logs")
+	loggerGroup := apiV1.Group("/logs")
 	c.LoggerHandler.RegisterRoutes(loggerGroup)
 }
 
