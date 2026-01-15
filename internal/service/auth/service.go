@@ -5,10 +5,10 @@ import (
 )
 
 type Service struct {
-	repo *auth.Repository
+	repo *auth.PostgresUserRepository
 }
 
-func NewService(repo *auth.Repository) *Service {
+func NewService(repo *auth.PostgresUserRepository) *Service {
 	return &Service{
 		repo: repo,
 	}

@@ -43,7 +43,6 @@ func NewContainer(db *sql.DB, cfg *config.Config) *Container {
 	// Создаем таблицу для логов если её нет
 	ctx := context.Background()
 	if err := loggerRepository.CreateTable(ctx); err != nil {
-		// Логируем ошибку, но не паникуем
 		_ = err
 	}
 

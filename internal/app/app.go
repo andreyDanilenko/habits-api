@@ -28,6 +28,10 @@ func New(cfg *config.Config) (*App, error) {
 		return nil, fmt.Errorf("failed to initialize database: %w", err)
 	}
 
+	if err := database.RunMigrations(cfg.Database); err != nil {
+		return nil, fmt.Errorf("Failed to run migrations: %w", err)
+	}
+
 	container := di.NewContainer(db, cfg)
 	container.RegisterRoutes(r)
 
