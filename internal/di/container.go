@@ -19,7 +19,6 @@ import (
 	journalService "backend/internal/service/journal"
 	loggerService "backend/internal/service/logger"
 	workspaceService "backend/internal/service/workspace"
-	"context"
 	"database/sql"
 	"net/http"
 
@@ -39,12 +38,6 @@ func NewContainer(db *sql.DB, cfg *config.Config) *Container {
 	// Logger
 	loggerRepository := loggerRepo.NewRepository(db)
 	logService := loggerService.NewService(loggerRepository, cfg.Logs.Dir)
-
-	// Создаем таблицу для логов если её нет
-	ctx := context.Background()
-	if err := loggerRepository.CreateTable(ctx); err != nil {
-		_ = err
-	}
 
 	// Auth
 	authRepository := authRepo.NewRepository(db)

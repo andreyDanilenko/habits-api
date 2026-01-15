@@ -17,7 +17,6 @@
 - `SyncToDB()` - читает вчерашний файл и записывает в БД
 
 ### 3. Repository (`internal/repository/logger/repository.go`)
-- `CreateTable()` - создает таблицу в БД
 - `BatchInsert()` - записывает логи в БД
 
 ### 4. Worker (`internal/worker/log_processor.go`)
