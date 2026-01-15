@@ -7,6 +7,7 @@ import (
 	"backend/internal/router"
 	"backend/internal/worker"
 	"context"
+	"database/sql"
 	"fmt"
 	"net/http"
 	"time"
@@ -18,6 +19,7 @@ type App struct {
 	server       *http.Server
 	logProcessor *worker.LogProcessor
 	logService   *di.Container
+	db           *sql.DB
 }
 
 func New(cfg *config.Config) (*App, error) {
@@ -44,6 +46,7 @@ func New(cfg *config.Config) (*App, error) {
 		router:       r,
 		logProcessor: logProcessor,
 		logService:   container,
+		db:           db,
 	}, nil
 }
 
@@ -67,5 +70,12 @@ func (a *App) Shutdown(ctx context.Context) error {
 		a.logProcessor.Stop()
 	}
 
-	return a.server.Shutdown(ctx)
+	if a.db != nil {
+		a.db.Close()
+	}
+
+	if a.server != nil {
+		return a.server.Shutdown(ctx)
+	}
+	return nil
 }
