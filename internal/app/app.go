@@ -7,6 +7,7 @@ import (
 	"backend/internal/router"
 	"backend/internal/worker"
 	"context"
+	"database/sql"
 	"fmt"
 	"net/http"
 	"time"
@@ -18,6 +19,7 @@ type App struct {
 	server       *http.Server
 	logProcessor *worker.LogProcessor
 	logService   *di.Container
+	db           *sql.DB
 }
 
 func New(cfg *config.Config) (*App, error) {
@@ -26,6 +28,10 @@ func New(cfg *config.Config) (*App, error) {
 	db, err := database.InitDB(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize database: %w", err)
+	}
+
+	if err := database.RunMigrations(cfg.Database); err != nil {
+		return nil, fmt.Errorf("Failed to run migrations: %w", err)
 	}
 
 	container := di.NewContainer(db, cfg)
@@ -40,6 +46,7 @@ func New(cfg *config.Config) (*App, error) {
 		router:       r,
 		logProcessor: logProcessor,
 		logService:   container,
+		db:           db,
 	}, nil
 }
 
@@ -58,10 +65,18 @@ func (a *App) Run() error {
 	return a.server.ListenAndServe()
 }
 
+// https://habr.com/ru/articles/908344/
 func (a *App) Shutdown(ctx context.Context) error {
 	if a.logProcessor != nil {
 		a.logProcessor.Stop()
 	}
 
-	return a.server.Shutdown(ctx)
+	if a.db != nil {
+		a.db.Close()
+	}
+
+	if a.server != nil {
+		return a.server.Shutdown(ctx)
+	}
+	return nil
 }

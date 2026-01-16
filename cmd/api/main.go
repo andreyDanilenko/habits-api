@@ -1,9 +1,10 @@
 package main
 
 import (
+	"log"
+
 	"backend/internal/app"
 	"backend/internal/config"
-	"log"
 )
 
 func main() {

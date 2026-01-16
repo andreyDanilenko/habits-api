@@ -2,7 +2,6 @@ package model
 
 import "time"
 
-// LogEntry представляет запись лога для БД
 type LogEntry struct {
 	Timestamp  time.Time     `json:"timestamp"`
 	StatusCode int           `json:"status_code"`
