@@ -20,6 +20,19 @@ func RunMigrations(db config.DatabaseConfig) error {
 		db.DBName,
 	)
 
+	// // Для разработки: сбросим миграции
+	// conn, err := sql.Open("postgres", dsn)
+	// if err != nil {
+	// 	return err
+	// }
+	// defer conn.Close()
+
+	// // Удаляем таблицу миграций чтобы начать заново
+	// _, err = conn.Exec("DROP TABLE IF EXISTS schema_migrations")
+	// if err != nil {
+	// 	log.Printf("Warning: could not drop migrations table: %v", err)
+	// }
+
 	m, err := migrate.New(
 		"file://./migrations",
 		dsn,

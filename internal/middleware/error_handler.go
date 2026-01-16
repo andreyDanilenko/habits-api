@@ -8,7 +8,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// ErrorHandler обрабатывает паники и ошибки в обработчиках
 func ErrorHandler() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Восстанавливаемся от паники
@@ -16,7 +15,6 @@ func ErrorHandler() gin.HandlerFunc {
 			if err := recover(); err != nil {
 				log.Printf("panic recovered: %v", err)
 
-				// Отправляем ответ об ошибке
 				response.InternalServerError(c, "internal server error")
 				c.Abort()
 			}
@@ -25,7 +23,6 @@ func ErrorHandler() gin.HandlerFunc {
 		c.Next()
 
 		// Проверяем, есть ли ошибки в контексте
-		// (если обработчики используют c.Error())
 		if len(c.Errors) > 0 {
 			lastErr := c.Errors.Last()
 			if lastErr != nil {

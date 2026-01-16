@@ -16,11 +16,12 @@ const (
 )
 
 type User struct {
-	ID        string      `json:"id" db:"id"`
-	Email     string      `json:"email" db:"email"`
-	Password  string      `json:"-" db:"password"`
-	Name      *string     `json:"name,omitempty" db:"name"`
-	Role      UserRole    `json:"role" db:"role"`
+	ID       string   `json:"id" db:"id"`
+	Email    string   `json:"email" db:"email"`
+	Password string   `json:"-" db:"password"`
+	Name     *string  `json:"name,omitempty" db:"name"`
+	Role     UserRole `json:"role" db:"role"`
+
 	AvatarURL *string     `json:"avatarUrl,omitempty" db:"avatar_url"`
 	Status    *UserStatus `json:"status,omitempty" db:"status"`
 	CreatedAt time.Time   `json:"createdAt" db:"created_at"`

@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"backend/internal/model"
@@ -47,12 +48,18 @@ func NewService(
 func (s *AuthService) Register(ctx context.Context, req model.RegisterRequest) (*model.User, error) {
 	// 1. Проверяем, существует ли пользователь с таким email
 	existing, err := s.userRepo.FindByEmail(ctx, req.Email)
+	fmt.Println("sadsadasdsa", existing, err)
+
 	if err != nil {
 		return nil, err
 	}
+	fmt.Println("sadsadasdsa", existing, err)
+
 	if existing != nil {
 		return nil, ErrUserExists
 	}
+
+	fmt.Println("sadsadasdsa", existing, err)
 
 	// 2. Хешируем пароль
 	hashedPassword, err := password.Hash(req.Password)
