@@ -65,6 +65,7 @@ func (a *App) Run() error {
 	return a.server.ListenAndServe()
 }
 
+// https://habr.com/ru/articles/908344/
 func (a *App) Shutdown(ctx context.Context) error {
 	if a.logProcessor != nil {
 		a.logProcessor.Stop()
