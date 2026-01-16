@@ -15,10 +15,27 @@ type ErrorResponse struct {
 	Details   interface{} `json:"details,omitempty"`
 }
 
-func WriteError(c *gin.Context, statusCode int, message string) {
-	WriteErrorWithCode(c, statusCode, http.StatusText(statusCode), message, nil)
+func simpleErrorCode(statusCode int) string {
+	switch statusCode {
+	case http.StatusBadRequest: // 400
+		return "BAD_REQUEST"
+	case http.StatusUnauthorized: // 401
+		return "UNAUTHORIZED"
+	case http.StatusForbidden: // 403
+		return "FORBIDDEN"
+	case http.StatusNotFound: // 404
+		return "NOT_FOUND"
+	case http.StatusInternalServerError: // 500
+		return "INTERNAL_ERROR"
+	default:
+		return ""
+	}
 }
 
+func WriteError(c *gin.Context, statusCode int, message string) {
+	simpleCode := simpleErrorCode(statusCode)
+	WriteErrorWithCode(c, statusCode, simpleCode, message, nil)
+}
 func WriteErrorWithCode(c *gin.Context, statusCode int, errorCode, message string, details interface{}) {
 	if statusCode >= 500 {
 		log.Printf("internal error [%d]: %s - %s", statusCode, errorCode, message)
@@ -34,12 +51,10 @@ func WriteErrorWithCode(c *gin.Context, statusCode int, errorCode, message strin
 	c.JSON(statusCode, response)
 }
 
-// BadRequest отправляет ответ 400 Bad Request
 func BadRequest(c *gin.Context, message string) {
 	WriteError(c, http.StatusBadRequest, message)
 }
 
-// Unauthorized отправляет ответ 401 Unauthorized
 func Unauthorized(c *gin.Context, message string) {
 	if message == "" {
 		message = "unauthorized"
@@ -47,7 +62,6 @@ func Unauthorized(c *gin.Context, message string) {
 	WriteError(c, http.StatusUnauthorized, message)
 }
 
-// Forbidden отправляет ответ 403 Forbidden
 func Forbidden(c *gin.Context, message string) {
 	if message == "" {
 		message = "forbidden"
@@ -55,7 +69,6 @@ func Forbidden(c *gin.Context, message string) {
 	WriteError(c, http.StatusForbidden, message)
 }
 
-// NotFound отправляет ответ 404 Not Found
 func NotFound(c *gin.Context, message string) {
 	if message == "" {
 		message = "resource not found"
@@ -63,7 +76,6 @@ func NotFound(c *gin.Context, message string) {
 	WriteError(c, http.StatusNotFound, message)
 }
 
-// InternalServerError отправляет ответ 500 Internal Server Error
 func InternalServerError(c *gin.Context, message string) {
 	if message == "" {
 		message = "internal server error"
@@ -71,7 +83,6 @@ func InternalServerError(c *gin.Context, message string) {
 	WriteError(c, http.StatusInternalServerError, message)
 }
 
-// InternalServerErrorWithDetails отправляет ответ 500 с деталями ошибки
 func InternalServerErrorWithDetails(c *gin.Context, message string, err error) {
 	details := map[string]string{}
 	if err != nil {
