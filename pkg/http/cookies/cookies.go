@@ -44,7 +44,8 @@ func (m *Manager) Delete(w http.ResponseWriter, name string) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     name,
 		Value:    "",
-		Expires:  time.Now().Add(-24 * time.Hour),
+		MaxAge:   -1,
+		Expires:  time.Unix(0, 0),
 		HttpOnly: true,
 		Secure:   m.secure,
 		SameSite: m.sameSite,
