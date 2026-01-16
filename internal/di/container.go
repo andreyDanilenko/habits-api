@@ -8,10 +8,10 @@ import (
 	loggerHandler "backend/internal/handler/logger"
 	workspaceHandler "backend/internal/handler/workspace"
 	"backend/internal/middleware"
-	authRepo "backend/internal/repository/auth"
 	habitsRepo "backend/internal/repository/habits"
 	journalRepo "backend/internal/repository/journal"
 	loggerRepo "backend/internal/repository/logger"
+	userRepo "backend/internal/repository/user"
 	workspaceRepo "backend/internal/repository/workspace"
 	"backend/internal/router"
 	authService "backend/internal/service/auth"
@@ -19,6 +19,7 @@ import (
 	journalService "backend/internal/service/journal"
 	loggerService "backend/internal/service/logger"
 	workspaceService "backend/internal/service/workspace"
+	"backend/pkg/auth/token"
 	"database/sql"
 	"net/http"
 
@@ -40,8 +41,9 @@ func NewContainer(db *sql.DB, cfg *config.Config) *Container {
 	logService := loggerService.NewService(loggerRepository, cfg.Logs.Dir)
 
 	// Auth
-	authRepository := authRepo.NewRepository(db)
-	authSvc := authService.NewService(authRepository)
+	userRepository := userRepo.NewRepository(db)
+	tokenGen := token.NewGenerator(cfg.Auth.JWTSecretKey, cfg.Auth.JWTExpiration)
+	authSvc := authService.NewService(userRepository, tokenGen, cfg.Auth.JWTExpiration)
 	authHdlr := authHandler.NewHandler(authSvc)
 
 	// Workspace

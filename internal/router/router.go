@@ -12,8 +12,6 @@ type Router struct {
 
 func New() *Router {
 	engine := gin.Default()
-
-	// Добавляем middleware для обработки ошибок и паник
 	engine.Use(middleware.ErrorHandler())
 
 	return &Router{engine: engine}

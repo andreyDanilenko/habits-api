@@ -1,16 +1,16 @@
 package auth
 
 import (
-	"backend/internal/service/auth"
+	authService "backend/internal/service/auth"
 
 	"github.com/gin-gonic/gin"
 )
 
 type Handler struct {
-	service *auth.Service
+	service *authService.AuthService
 }
 
-func NewHandler(service *auth.Service) *Handler {
+func NewHandler(service *authService.AuthService) *Handler {
 	return &Handler{
 		service: service,
 	}
