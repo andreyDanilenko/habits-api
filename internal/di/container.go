@@ -79,6 +79,7 @@ func NewContainer(db *sql.DB, cfg *config.Config) *Container {
 }
 
 func (c *Container) RegisterRoutes(r *router.Router) {
+	r.Handler().Use(middleware.CORSMiddleware())
 	r.Handler().Use(middleware.ErrorHandler())
 	r.Handler().Use(middleware.RequestLogger(c.LogService))
 
