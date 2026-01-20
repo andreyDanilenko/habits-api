@@ -15,10 +15,18 @@ import (
 )
 
 func (h *Handler) RegisterRoutes(r *gin.RouterGroup) {
+	h.RegisterPublicRoutes(r)
+	h.RegisterProtectedRoutes(r)
+}
+
+func (h *Handler) RegisterPublicRoutes(r *gin.RouterGroup) {
 	r.POST(RouteLogin, h.Login)
 	r.POST(RouteRegister, h.Register)
 	r.POST(RouteLogout, h.Logout)
 	r.POST(RouteRefresh, h.Refresh)
+}
+
+func (h *Handler) RegisterProtectedRoutes(r *gin.RouterGroup) {
 	r.GET(RouteMe, h.Me)
 }
 

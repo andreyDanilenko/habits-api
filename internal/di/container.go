@@ -46,7 +46,8 @@ func NewContainer(db *sql.DB, cfg *config.Config) *Container {
 	userRepository := userRepo.NewRepository(db)
 	tokenGen := token.NewGenerator(cfg.Auth.JWTSecretKey, cfg.Auth.JWTExpiration)
 	authSvc := authService.NewService(userRepository, tokenGen, cfg.Auth.JWTExpiration)
-	cookieManager := cookies.NewManager(cfg.Auth.CookieDomain, cfg.Auth.SecureCookies, http.SameSiteLaxMode)
+
+	cookieManager := cookies.NewManagerFromEnv()
 	authHdlr := authHandler.NewHandler(authSvc, cookieManager)
 
 	// Workspace
@@ -79,6 +80,8 @@ func NewContainer(db *sql.DB, cfg *config.Config) *Container {
 }
 
 func (c *Container) RegisterRoutes(r *router.Router) {
+	// Настраиваем CORS middleware с правильными параметрами
+	r.Handler().Use(middleware.CORSMiddleware())
 	r.Handler().Use(middleware.ErrorHandler())
 	r.Handler().Use(middleware.RequestLogger(c.LogService))
 
@@ -86,12 +89,18 @@ func (c *Container) RegisterRoutes(r *router.Router) {
 	r.GET("/health", HealthCheck)
 	apiV1 := r.Group("/api/v1")
 
-	// Auth routes
+	// Public auth routes (login, register, logout, refresh)
 	authGroup := apiV1.Group("/auth")
-	c.AuthHandler.RegisterRoutes(authGroup)
+	c.AuthHandler.RegisterPublicRoutes(authGroup)
 
+	// Protected routes
 	protected := apiV1.Group("")
 	protected.Use(middleware.GinAuthMiddleware(c.TokenGen))
+
+	// Protected auth routes (me)
+	protectedAuthGroup := protected.Group("/auth")
+	c.AuthHandler.RegisterProtectedRoutes(protectedAuthGroup)
+
 	// Workspace routes
 	workspaceGroup := protected.Group("/workspaces")
 	c.WorkspaceHandler.RegisterRoutes(workspaceGroup)
