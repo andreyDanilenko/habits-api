@@ -48,7 +48,7 @@ func NewService(
 	}
 }
 
-func (s *AuthService) Register(ctx context.Context, req model.RegisterRequest) (*model.User, error) {
+func (s *AuthService) Register(ctx context.Context, req model.RegisterRequest) (*LoginResponse, error) {
 	// 1. Проверяем, существует ли пользователь с таким email
 	existing, err := s.userRepo.FindByEmail(ctx, req.Email)
 	if err != nil {
@@ -97,9 +97,19 @@ func (s *AuthService) Register(ctx context.Context, req model.RegisterRequest) (
 		fmt.Printf("Failed to create default workspace for user %s: %v\n", user.ID, err)
 	}
 
-	// 6. Очищаем пароль перед возвратом
+	// 6. Генерируем access token
+	accessToken, err := s.tokenGen.Generate(user.ID, string(user.Role))
+	if err != nil {
+		return nil, err
+	}
+
+	// 7. Очищаем пароль перед возвратом
 	user.Password = ""
-	return user, nil
+	return &LoginResponse{
+		User:        user,
+		AccessToken: accessToken,
+		ExpiresIn:   int(s.accessExpiry.Seconds()),
+	}, nil
 }
 
 func (s *AuthService) Login(ctx context.Context, req model.LoginRequest) (*LoginResponse, error) {
