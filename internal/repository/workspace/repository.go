@@ -233,25 +233,25 @@ func (r *Repository) Delete(ctx context.Context, workspaceID uuid.UUID) error {
 	return nil
 }
 
+// HasAccess проверяет доступ пользователя к workspace (member в user_workspaces или owner).
+func (r *Repository) HasAccess(ctx context.Context, workspaceID, userID uuid.UUID) (bool, error) {
+	var ok bool
+	err := r.db.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM workspaces WHERE id = $1 AND owner_id = $2
+			UNION ALL
+			SELECT 1 FROM user_workspaces WHERE workspace_id = $1 AND user_id = $2
+		)
+	`, workspaceID, userID).Scan(&ok)
+	if err != nil {
+		return false, fmt.Errorf("check workspace access: %w", err)
+	}
+	return ok, nil
+}
+
 func (r *Repository) CheckAccess(ctx context.Context, workspaceID, userID uuid.UUID, userRole model.UserRole) (bool, error) {
-	// Админ имеет доступ ко всем workspace
 	if userRole == model.UserRoleAdmin {
 		return true, nil
 	}
-
-	// Проверяем, является ли пользователь владельцем
-	var ownerID uuid.UUID
-	err := r.db.QueryRowContext(ctx,
-		"SELECT owner_id FROM workspaces WHERE id = $1",
-		workspaceID,
-	).Scan(&ownerID)
-
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("failed to check workspace owner: %w", err)
-	}
-
-	return ownerID == userID, nil
+	return r.HasAccess(ctx, workspaceID, userID)
 }
