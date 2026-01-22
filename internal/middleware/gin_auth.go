@@ -16,7 +16,7 @@ const (
 	GinRoleKey   = "role"
 )
 
-func GinAuthMiddleware(tokenGen *token.Generator) gin.HandlerFunc {
+func GinAuthMiddleware(tokenGen *token.Generator, responder *response.Responder) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var tokenString string
 		var tokenFound bool
@@ -39,7 +39,7 @@ func GinAuthMiddleware(tokenGen *token.Generator) gin.HandlerFunc {
 		// 3. Если токен не найден - возвращаем 401
 		if !tokenFound {
 			fmt.Println("GinAuthMiddleware: no token found")
-			response.Unauthorized(c, "Authentication required")
+			responder.Unauthorized(c, "Authentication required")
 			c.Abort()
 			return
 		}
@@ -50,14 +50,13 @@ func GinAuthMiddleware(tokenGen *token.Generator) gin.HandlerFunc {
 		claims, err := tokenGen.Validate(tokenString)
 		if err != nil {
 			fmt.Println("GinAuthMiddleware: invalid token:", err)
-			response.Unauthorized(c, "Invalid token")
-			c.Abort() // ← Прерываем цепочку
+			responder.Unauthorized(c, "Invalid token")
+			c.Abort()
 			return
 		}
 
 		fmt.Println("GinAuthMiddleware: valid token for user:", claims.UserID)
 
-		// Сохраняем в контекст Gin
 		c.Set(GinUserIDKey, claims.UserID)
 		c.Set(GinRoleKey, model.UserRole(claims.Role))
 

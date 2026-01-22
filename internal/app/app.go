@@ -23,7 +23,6 @@ type App struct {
 }
 
 func New(cfg *config.Config) (*App, error) {
-	r := router.New()
 
 	db, err := database.InitDB(cfg)
 	if err != nil {
@@ -35,6 +34,7 @@ func New(cfg *config.Config) (*App, error) {
 	}
 
 	container := di.NewContainer(db, cfg)
+	r := container.Router
 	container.RegisterRoutes(r)
 
 	// Создаем и запускаем воркер для обработки логов

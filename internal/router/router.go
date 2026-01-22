@@ -2,6 +2,7 @@ package router
 
 import (
 	"backend/internal/middleware"
+	"backend/pkg/response"
 
 	"github.com/gin-gonic/gin"
 )
@@ -10,9 +11,9 @@ type Router struct {
 	engine *gin.Engine
 }
 
-func New() *Router {
+func New(responder *response.Responder) *Router {
 	engine := gin.Default()
-	engine.Use(middleware.ErrorHandler())
+	engine.Use(middleware.ErrorHandler(responder))
 
 	return &Router{engine: engine}
 }

@@ -1,14 +1,16 @@
 package auth
 
 import (
+	"fmt"
+	"net/http"
+	"strings"
+	"time"
+
 	"backend/internal/middleware"
 	"backend/internal/model"
 	authService "backend/internal/service/auth"
 	"backend/pkg/http/cookies"
 	"backend/pkg/response"
-	"fmt"
-	"net/http"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
@@ -34,13 +36,20 @@ type Handler struct {
 	service       *authService.AuthService
 	cookieManager *cookies.Manager
 	validate      *validator.Validate
+	responder     *response.Responder
 }
 
-func NewHandler(service *authService.AuthService, cookieManager *cookies.Manager) *Handler {
+func NewHandler(
+	service *authService.AuthService,
+	cookieManager *cookies.Manager,
+	responder *response.Responder,
+	validate *validator.Validate,
+) *Handler {
 	return &Handler{
 		service:       service,
 		cookieManager: cookieManager,
-		validate:      validator.New(),
+		validate:      validate,
+		responder:     responder,
 	}
 }
 
@@ -48,24 +57,23 @@ func (h *Handler) Login(c *gin.Context) {
 	var req model.LoginRequest
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "Invalid request")
+		h.responder.BadRequest(c, "Invalid request")
 		return
 	}
 
 	if err := h.validate.Struct(req); err != nil {
-		response.BadRequest(c, err.Error())
+		h.responder.BadRequest(c, err.Error())
 		return
 	}
 
 	loginResp, err := h.service.Login(c.Request.Context(), req)
 
-	fmt.Println("123123", loginResp)
 	if err != nil {
 		switch err {
 		case authService.ErrInvalidCredentials:
-			response.Unauthorized(c, "Invalid email or password")
+			h.responder.Unauthorized(c, "Invalid email or password")
 		default:
-			response.InternalServerError(c, "Internal server error")
+			h.responder.InternalServerError(c, "Internal server error")
 		}
 		return
 	}
@@ -73,7 +81,7 @@ func (h *Handler) Login(c *gin.Context) {
 	expiresAt := time.Now().Add(time.Duration(loginResp.ExpiresIn) * time.Second)
 	h.cookieManager.SetToken(c.Writer, "access_token", loginResp.AccessToken, expiresAt)
 
-	response.SuccessWithData(c, gin.H{
+	h.responder.SuccessWithData(c, gin.H{
 		"user":       loginResp.User,
 		"expires_in": loginResp.ExpiresIn,
 	})
@@ -83,62 +91,103 @@ func (h *Handler) Register(c *gin.Context) {
 	var req model.RegisterRequest
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
+		h.responder.BadRequest(c, "Invalid request format")
 		return
 	}
+
+	req.Email = strings.TrimSpace(req.Email)
+	req.Password = strings.TrimSpace(req.Password)
+	req.Name = strings.TrimSpace(req.Name)
 
 	if err := h.validate.Struct(req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		validationErrors := make(map[string]string)
+		if validationErr, ok := err.(validator.ValidationErrors); ok {
+			for _, fieldErr := range validationErr {
+				field := fieldErr.Field()
+				tag := fieldErr.Tag()
+
+				var message string
+				switch field {
+				case "Email":
+					if tag == "required" {
+						message = "Email is required"
+					} else if tag == "email" {
+						message = "Invalid email format"
+					}
+				case "Password":
+					if tag == "required" {
+						message = "Password is required"
+					} else if tag == "min" {
+						message = fmt.Sprintf("Password must be at least %s characters long", fieldErr.Param())
+					}
+				case "Name":
+					if tag == "required" {
+						message = "Name is required"
+					} else if tag == "min" {
+						message = "Name cannot be empty"
+					}
+				default:
+					if tag == "required" {
+						message = fmt.Sprintf("%s is required", field)
+					} else if tag == "min" {
+						message = fmt.Sprintf("%s must be at least %s characters long", field, fieldErr.Param())
+					} else {
+						message = fmt.Sprintf("Invalid %s", field)
+					}
+				}
+
+				validationErrors[strings.ToLower(field)] = message
+			}
+		} else {
+			validationErrors["general"] = err.Error()
+		}
+
+		h.responder.WriteErrorWithCode(c, 400, "VALIDATION_ERROR", "Validation failed", validationErrors)
 		return
 	}
 
-	user, err := h.service.Register(c.Request.Context(), req)
+	registerResp, err := h.service.Register(c.Request.Context(), req)
 
-	fmt.Println("12313123", user)
 	if err != nil {
 		switch err {
 		case authService.ErrUserExists:
-			c.JSON(http.StatusConflict, gin.H{"error": "User already exists"})
+			h.responder.WriteErrorWithCode(c, 409, "USER_EXISTS", "User already exists", nil)
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+			h.responder.InternalServerError(c, "Failed to register user")
 		}
 		return
 	}
 
-	c.JSON(http.StatusCreated, gin.H{
-		"success": true,
-		"user":    user,
+	expiresAt := time.Now().Add(time.Duration(registerResp.ExpiresIn) * time.Second)
+	h.cookieManager.SetToken(c.Writer, "access_token", registerResp.AccessToken, expiresAt)
+
+	h.responder.Created(c, "User registered successfully", gin.H{
+		"user":       registerResp.User,
+		"expires_in": registerResp.ExpiresIn,
 	})
 }
 
 func (h *Handler) Logout(c *gin.Context) {
 	h.cookieManager.Delete(c.Writer, "access_token")
-
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "Logged out",
-	})
+	h.responder.SuccessWithMessage(c, "Logged out successfully")
 }
 
 func (h *Handler) Me(c *gin.Context) {
 	userID, ok := middleware.GetUserIDFromGin(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		h.responder.Unauthorized(c, "Authentication required")
 		return
 	}
 
 	user, err := h.service.GetUserProfile(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		h.responder.InternalServerError(c, "Failed to get user profile")
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"user":    user,
-	})
+	h.responder.SuccessWithData(c, gin.H{"user": user})
 }
 
 func (h *Handler) Refresh(c *gin.Context) {
-	c.JSON(http.StatusNotImplemented, gin.H{"error": "Not implemented yet"})
+	h.responder.WriteError(c, http.StatusNotImplemented, "Refresh endpoint is not implemented yet")
 }
