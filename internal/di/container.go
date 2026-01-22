@@ -51,17 +51,18 @@ func NewContainer(db *sql.DB, cfg *config.Config) *Container {
 	loggerRepository := loggerRepo.NewRepository(db)
 	logService := loggerService.NewService(loggerRepository, cfg.Logs.Dir)
 
+	workspaceRepository := workspaceRepo.NewRepository(db)
+	workspaceSvc := workspaceService.NewService(workspaceRepository)
+
 	// Auth
 	userRepository := userRepo.NewRepository(db)
 	tokenGen := token.NewGenerator(cfg.Auth.JWTSecretKey, cfg.Auth.JWTExpiration)
-	authSvc := authService.NewService(userRepository, tokenGen, cfg.Auth.JWTExpiration)
+	authSvc := authService.NewService(userRepository, workspaceSvc, tokenGen, cfg.Auth.JWTExpiration)
 
 	cookieManager := cookies.NewManagerFromEnv()
 	authHdlr := authHandler.NewHandler(authSvc, cookieManager, responder, validate)
 
-	// Workspace
-	workspaceRepository := workspaceRepo.NewRepository(db)
-	workspaceSvc := workspaceService.NewService(workspaceRepository)
+	// Workspace handler
 	workspaceHdlr := workspaceHandler.NewHandler(workspaceSvc, responder, validate)
 
 	// Habits

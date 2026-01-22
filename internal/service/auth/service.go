@@ -8,6 +8,7 @@ import (
 
 	"backend/internal/model"
 	userRepo "backend/internal/repository/user"
+	workspaceService "backend/internal/service/workspace"
 	"backend/pkg/auth/token"
 	"backend/pkg/password"
 
@@ -21,9 +22,10 @@ var (
 )
 
 type AuthService struct {
-	userRepo     userRepo.UserRepository
-	tokenGen     *token.Generator
-	accessExpiry time.Duration
+	userRepo         userRepo.UserRepository
+	workspaceService *workspaceService.Service
+	tokenGen         *token.Generator
+	accessExpiry     time.Duration
 }
 
 type LoginResponse struct {
@@ -34,32 +36,28 @@ type LoginResponse struct {
 
 func NewService(
 	userRepo userRepo.UserRepository,
+	workspaceService *workspaceService.Service,
 	tokenGen *token.Generator,
 	accessExpiry time.Duration,
 ) *AuthService {
 	return &AuthService{
-		userRepo:     userRepo,
-		tokenGen:     tokenGen,
-		accessExpiry: accessExpiry,
+		userRepo:         userRepo,
+		workspaceService: workspaceService,
+		tokenGen:         tokenGen,
+		accessExpiry:     accessExpiry,
 	}
 }
 
-// Register - регистрация нового пользователя
 func (s *AuthService) Register(ctx context.Context, req model.RegisterRequest) (*model.User, error) {
 	// 1. Проверяем, существует ли пользователь с таким email
 	existing, err := s.userRepo.FindByEmail(ctx, req.Email)
-	fmt.Println("sadsadasdsa", existing, err)
-
 	if err != nil {
 		return nil, err
 	}
-	fmt.Println("sadsadasdsa", existing, err)
 
 	if existing != nil {
 		return nil, ErrUserExists
 	}
-
-	fmt.Println("sadsadasdsa", existing, err)
 
 	// 2. Хешируем пароль
 	hashedPassword, err := password.Hash(req.Password)
@@ -85,12 +83,25 @@ func (s *AuthService) Register(ctx context.Context, req model.RegisterRequest) (
 		return nil, err
 	}
 
-	// 5. Очищаем пароль перед возвратом
+	// 5. Создаем базовый workspace для пользователя
+	defaultName := "My Workspace"
+	if user.Name != nil {
+		defaultName = *user.Name + "'s Workspace"
+	}
+	_, err = s.workspaceService.Create(ctx, model.CreateWorkspaceDto{
+		Name:  defaultName,
+		Color: stringPtr("#3B82F6"),
+	}, user.ID)
+	if err != nil {
+		// Логируем ошибку, но не прерываем регистрацию
+		fmt.Printf("Failed to create default workspace for user %s: %v\n", user.ID, err)
+	}
+
+	// 6. Очищаем пароль перед возвратом
 	user.Password = ""
 	return user, nil
 }
 
-// Login - аутентификация пользователя
 func (s *AuthService) Login(ctx context.Context, req model.LoginRequest) (*LoginResponse, error) {
 	// 1. Находим пользователя по email
 	user, err := s.userRepo.FindByEmail(ctx, req.Email)
