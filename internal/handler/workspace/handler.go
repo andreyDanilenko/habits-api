@@ -2,17 +2,27 @@ package workspace
 
 import (
 	"backend/internal/service/workspace"
+	"backend/pkg/response"
 
 	"github.com/gin-gonic/gin"
+	"github.com/go-playground/validator/v10"
 )
 
 type Handler struct {
-	service *workspace.Service
+	service   *workspace.Service
+	validate  *validator.Validate
+	responder *response.Responder
 }
 
-func NewHandler(service *workspace.Service) *Handler {
+func NewHandler(
+	service *workspace.Service,
+	responder *response.Responder,
+	validate *validator.Validate,
+) *Handler {
 	return &Handler{
-		service: service,
+		service:   service,
+		responder: responder,
+		validate:  validate,
 	}
 }
 

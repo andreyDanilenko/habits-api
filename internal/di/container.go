@@ -21,13 +21,16 @@ import (
 	workspaceService "backend/internal/service/workspace"
 	"backend/pkg/auth/token"
 	"backend/pkg/http/cookies"
+	"backend/pkg/response"
 	"database/sql"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/go-playground/validator/v10"
 )
 
 type Container struct {
+	Router           *router.Router
 	AuthHandler      *authHandler.Handler
 	WorkspaceHandler *workspaceHandler.Handler
 	HabitsHandler    *habitsHandler.Handler
@@ -35,9 +38,15 @@ type Container struct {
 	LoggerHandler    *loggerHandler.Handler
 	LogService       *loggerService.Service
 	TokenGen         *token.Generator
+	Responder        *response.Responder
+	Validate         *validator.Validate
 }
 
 func NewContainer(db *sql.DB, cfg *config.Config) *Container {
+	responder := response.NewResponder()
+	validate := validator.New()
+	r := router.New(responder)
+
 	// Logger
 	loggerRepository := loggerRepo.NewRepository(db)
 	logService := loggerService.NewService(loggerRepository, cfg.Logs.Dir)
@@ -48,27 +57,28 @@ func NewContainer(db *sql.DB, cfg *config.Config) *Container {
 	authSvc := authService.NewService(userRepository, tokenGen, cfg.Auth.JWTExpiration)
 
 	cookieManager := cookies.NewManagerFromEnv()
-	authHdlr := authHandler.NewHandler(authSvc, cookieManager)
+	authHdlr := authHandler.NewHandler(authSvc, cookieManager, responder, validate)
 
 	// Workspace
 	workspaceRepository := workspaceRepo.NewRepository(db)
 	workspaceSvc := workspaceService.NewService(workspaceRepository)
-	workspaceHdlr := workspaceHandler.NewHandler(workspaceSvc)
+	workspaceHdlr := workspaceHandler.NewHandler(workspaceSvc, responder, validate)
 
 	// Habits
 	habitsRepository := habitsRepo.NewRepository(db)
 	habitsSvc := habitsService.NewService(habitsRepository)
-	habitsHdlr := habitsHandler.NewHandler(habitsSvc)
+	habitsHdlr := habitsHandler.NewHandler(habitsSvc, responder, validate)
 
 	// Journal
 	journalRepository := journalRepo.NewRepository(db)
 	journalSvc := journalService.NewService(journalRepository)
-	journalHdlr := journalHandler.NewHandler(journalSvc)
+	journalHdlr := journalHandler.NewHandler(journalSvc, responder, validate)
 
 	// Logger
-	loggerHdlr := loggerHandler.NewHandler(logService)
+	loggerHdlr := loggerHandler.NewHandler(logService, responder, validate)
 
 	return &Container{
+		Router:           r,
 		AuthHandler:      authHdlr,
 		WorkspaceHandler: workspaceHdlr,
 		HabitsHandler:    habitsHdlr,
@@ -76,13 +86,13 @@ func NewContainer(db *sql.DB, cfg *config.Config) *Container {
 		LoggerHandler:    loggerHdlr,
 		LogService:       logService,
 		TokenGen:         tokenGen,
+		Responder:        responder,
+		Validate:         validate,
 	}
 }
 
 func (c *Container) RegisterRoutes(r *router.Router) {
-	// Настраиваем CORS middleware с правильными параметрами
 	r.Handler().Use(middleware.CORSMiddleware())
-	r.Handler().Use(middleware.ErrorHandler())
 	r.Handler().Use(middleware.RequestLogger(c.LogService))
 
 	// Health check
@@ -95,7 +105,7 @@ func (c *Container) RegisterRoutes(r *router.Router) {
 
 	// Protected routes
 	protected := apiV1.Group("")
-	protected.Use(middleware.GinAuthMiddleware(c.TokenGen))
+	protected.Use(middleware.GinAuthMiddleware(c.TokenGen, c.Responder))
 
 	// Protected auth routes (me)
 	protectedAuthGroup := protected.Group("/auth")

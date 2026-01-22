@@ -2,17 +2,27 @@ package habits
 
 import (
 	"backend/internal/service/habits"
+	"backend/pkg/response"
 
 	"github.com/gin-gonic/gin"
+	"github.com/go-playground/validator/v10"
 )
 
 type Handler struct {
-	service *habits.Service
+	service   *habits.Service
+	validate  *validator.Validate
+	responder *response.Responder
 }
 
-func NewHandler(service *habits.Service) *Handler {
+func NewHandler(
+	service *habits.Service,
+	responder *response.Responder,
+	validate *validator.Validate,
+) *Handler {
 	return &Handler{
-		service: service,
+		service:   service,
+		responder: responder,
+		validate:  validate,
 	}
 }
 
