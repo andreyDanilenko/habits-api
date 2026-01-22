@@ -32,11 +32,12 @@ func simpleErrorCode(statusCode int) string {
 	}
 }
 
-func WriteError(c *gin.Context, statusCode int, message string) {
+func (r *Responder) WriteError(c *gin.Context, statusCode int, message string) {
 	simpleCode := simpleErrorCode(statusCode)
-	WriteErrorWithCode(c, statusCode, simpleCode, message, nil)
+	r.WriteErrorWithCode(c, statusCode, simpleCode, message, nil)
 }
-func WriteErrorWithCode(c *gin.Context, statusCode int, errorCode, message string, details interface{}) {
+
+func (r *Responder) WriteErrorWithCode(c *gin.Context, statusCode int, errorCode, message string, details interface{}) {
 	if statusCode >= 500 {
 		log.Printf("internal error [%d]: %s - %s", statusCode, errorCode, message)
 	}
@@ -51,42 +52,42 @@ func WriteErrorWithCode(c *gin.Context, statusCode int, errorCode, message strin
 	c.JSON(statusCode, response)
 }
 
-func BadRequest(c *gin.Context, message string) {
-	WriteError(c, http.StatusBadRequest, message)
+func (r *Responder) BadRequest(c *gin.Context, message string) {
+	r.WriteError(c, http.StatusBadRequest, message)
 }
 
-func Unauthorized(c *gin.Context, message string) {
+func (r *Responder) Unauthorized(c *gin.Context, message string) {
 	if message == "" {
 		message = "unauthorized"
 	}
-	WriteError(c, http.StatusUnauthorized, message)
+	r.WriteError(c, http.StatusUnauthorized, message)
 }
 
-func Forbidden(c *gin.Context, message string) {
+func (r *Responder) Forbidden(c *gin.Context, message string) {
 	if message == "" {
 		message = "forbidden"
 	}
-	WriteError(c, http.StatusForbidden, message)
+	r.WriteError(c, http.StatusForbidden, message)
 }
 
-func NotFound(c *gin.Context, message string) {
+func (r *Responder) NotFound(c *gin.Context, message string) {
 	if message == "" {
 		message = "resource not found"
 	}
-	WriteError(c, http.StatusNotFound, message)
+	r.WriteError(c, http.StatusNotFound, message)
 }
 
-func InternalServerError(c *gin.Context, message string) {
+func (r *Responder) InternalServerError(c *gin.Context, message string) {
 	if message == "" {
 		message = "internal server error"
 	}
-	WriteError(c, http.StatusInternalServerError, message)
+	r.WriteError(c, http.StatusInternalServerError, message)
 }
 
-func InternalServerErrorWithDetails(c *gin.Context, message string, err error) {
+func (r *Responder) InternalServerErrorWithDetails(c *gin.Context, message string, err error) {
 	details := map[string]string{}
 	if err != nil {
 		details["error"] = err.Error()
 	}
-	WriteErrorWithCode(c, http.StatusInternalServerError, "INTERNAL_ERROR", message, details)
+	r.WriteErrorWithCode(c, http.StatusInternalServerError, "INTERNAL_ERROR", message, details)
 }
