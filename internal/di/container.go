@@ -12,6 +12,7 @@ import (
 	journalRepo "backend/internal/repository/journal"
 	loggerRepo "backend/internal/repository/logger"
 	userRepo "backend/internal/repository/user"
+	userPrefsRepo "backend/internal/repository/user_preferences"
 	workspaceRepo "backend/internal/repository/workspace"
 	"backend/internal/router"
 	authService "backend/internal/service/auth"
@@ -33,6 +34,7 @@ type Container struct {
 	Router           *router.Router
 	AuthHandler      *authHandler.Handler
 	WorkspaceHandler *workspaceHandler.Handler
+	WorkspaceService *workspaceService.Service
 	HabitsHandler    *habitsHandler.Handler
 	JournalHandler   *journalHandler.Handler
 	LoggerHandler    *loggerHandler.Handler
@@ -52,7 +54,8 @@ func NewContainer(db *sql.DB, cfg *config.Config) *Container {
 	logService := loggerService.NewService(loggerRepository, cfg.Logs.Dir)
 
 	workspaceRepository := workspaceRepo.NewRepository(db)
-	workspaceSvc := workspaceService.NewService(workspaceRepository)
+	userPrefsRepository := userPrefsRepo.NewRepository(db)
+	workspaceSvc := workspaceService.NewService(workspaceRepository, userPrefsRepository)
 
 	// Auth
 	userRepository := userRepo.NewRepository(db)
@@ -82,6 +85,7 @@ func NewContainer(db *sql.DB, cfg *config.Config) *Container {
 		Router:           r,
 		AuthHandler:      authHdlr,
 		WorkspaceHandler: workspaceHdlr,
+		WorkspaceService: workspaceSvc,
 		HabitsHandler:    habitsHdlr,
 		JournalHandler:   journalHdlr,
 		LoggerHandler:    loggerHdlr,
@@ -107,6 +111,7 @@ func (c *Container) RegisterRoutes(r *router.Router) {
 	// Protected routes
 	protected := apiV1.Group("")
 	protected.Use(middleware.GinAuthMiddleware(c.TokenGen, c.Responder))
+	protected.Use(middleware.WorkspaceMiddleware(c.WorkspaceService))
 
 	// Protected auth routes (me)
 	protectedAuthGroup := protected.Group("/auth")
