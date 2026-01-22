@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"backend/internal/model"
+	"backend/internal/repository/user_preferences"
 	"backend/internal/repository/workspace"
 
 	"github.com/google/uuid"
@@ -13,15 +14,18 @@ import (
 var (
 	ErrWorkspaceNotFound = errors.New("workspace not found")
 	ErrAccessDenied      = errors.New("access denied")
+	ErrNoActiveWorkspace = errors.New("no active workspace")
 )
 
 type Service struct {
-	repo *workspace.Repository
+	repo     *workspace.Repository
+	prefRepo *user_preferences.Repository
 }
 
-func NewService(repo *workspace.Repository) *Service {
+func NewService(repo *workspace.Repository, prefRepo *user_preferences.Repository) *Service {
 	return &Service{
-		repo: repo,
+		repo:     repo,
+		prefRepo: prefRepo,
 	}
 }
 
@@ -123,4 +127,45 @@ func (s *Service) Delete(ctx context.Context, workspaceID, userID string, userRo
 	}
 
 	return s.repo.Delete(ctx, wsID)
+}
+
+func (s *Service) SetCurrentWorkspace(ctx context.Context, userID, workspaceID string) error {
+	uid, err := uuid.Parse(userID)
+	if err != nil {
+		return err
+	}
+	return s.prefRepo.SetCurrentWorkspace(ctx, uid, workspaceID)
+}
+
+func (s *Service) GetCurrentWorkspace(ctx context.Context, userID string) (string, error) {
+	uid, err := uuid.Parse(userID)
+	if err != nil {
+		return "", err
+	}
+	workspaceID, err := s.prefRepo.GetCurrentWorkspace(ctx, uid)
+	if err != nil {
+		return "", err
+	}
+	if workspaceID != "" {
+		return workspaceID, nil
+	}
+	list, err := s.repo.List(ctx, uid)
+	if err != nil || len(list) == 0 {
+		return "", ErrNoActiveWorkspace
+	}
+	workspaceID = list[0].ID
+	_ = s.prefRepo.SetCurrentWorkspace(ctx, uid, workspaceID)
+	return workspaceID, nil
+}
+
+func (s *Service) HasAccess(ctx context.Context, workspaceID, userID string) (bool, error) {
+	wsID, err := uuid.Parse(workspaceID)
+	if err != nil {
+		return false, err
+	}
+	uid, err := uuid.Parse(userID)
+	if err != nil {
+		return false, err
+	}
+	return s.repo.HasAccess(ctx, wsID, uid)
 }

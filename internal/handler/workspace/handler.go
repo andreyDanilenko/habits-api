@@ -31,6 +31,7 @@ func NewHandler(
 func (h *Handler) RegisterRoutes(r *gin.RouterGroup) {
 	r.GET(RouteList, h.List)
 	r.POST(RouteCreate, h.Create)
+	r.GET(RouteCurrent, h.GetCurrent)
 	r.GET(RouteGet, h.Get)
 	r.PUT(RouteUpdate, h.Update)
 	r.DELETE(RouteDelete, h.Delete)
@@ -174,9 +175,60 @@ func (h *Handler) GetMembers(c *gin.Context) {
 	c.JSON(200, gin.H{"message": "get members"})
 }
 
+func (h *Handler) GetCurrent(c *gin.Context) {
+	userID, ok := middleware.GetUserIDFromGin(c)
+	if !ok {
+		h.responder.Unauthorized(c, "Authentication required")
+		return
+	}
+
+	workspaceID, err := h.service.GetCurrentWorkspace(c.Request.Context(), userID)
+	if err != nil {
+		if err == workspaceService.ErrNoActiveWorkspace {
+			h.responder.NotFound(c, "No workspace selected")
+			return
+		}
+		h.responder.InternalServerError(c, "Failed to get current workspace")
+		return
+	}
+
+	role, _ := c.Get(middleware.GinRoleKey)
+	userRole := role.(model.UserRole)
+	ws, err := h.service.Get(c.Request.Context(), workspaceID, userID, userRole)
+	if err != nil {
+		h.responder.InternalServerError(c, "Failed to get workspace")
+		return
+	}
+
+	h.responder.SuccessWithData(c, gin.H{"workspace": ws})
+}
+
 func (h *Handler) Switch(c *gin.Context) {
-	// TODO: implement
-	c.JSON(200, gin.H{"message": "switch workspace"})
+	userID, ok := middleware.GetUserIDFromGin(c)
+	if !ok {
+		h.responder.Unauthorized(c, "Authentication required")
+		return
+	}
+
+	workspaceID := c.Param("id")
+	if workspaceID == "" {
+		h.responder.BadRequest(c, "Workspace ID required")
+		return
+	}
+
+	hasAccess, err := h.service.HasAccess(c.Request.Context(), workspaceID, userID)
+	if err != nil || !hasAccess {
+		h.responder.Forbidden(c, "Access denied to this workspace")
+		return
+	}
+
+	err = h.service.SetCurrentWorkspace(c.Request.Context(), userID, workspaceID)
+	if err != nil {
+		h.responder.InternalServerError(c, "Failed to switch workspace")
+		return
+	}
+
+	h.responder.SuccessWithMessage(c, "Workspace switched successfully")
 }
 
 func (h *Handler) GetModules(c *gin.Context) {

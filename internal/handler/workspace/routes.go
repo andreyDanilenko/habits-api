@@ -3,6 +3,7 @@ package workspace
 const (
 	RouteList    = ""
 	RouteCreate  = ""
+	RouteCurrent = "/current"
 	RouteGet     = "/:id"
 	RouteUpdate  = "/:id"
 	RouteDelete  = "/:id"
