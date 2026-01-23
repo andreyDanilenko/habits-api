@@ -90,7 +90,7 @@ func (h *Handler) Create(c *gin.Context) {
 
 	habit, err := h.service.Create(c.Request.Context(), req, userID, workspaceID)
 	if err != nil {
-		h.responder.InternalServerError(c, "Failed to create habit")
+		h.responder.InternalServerError(c, "Failed to create habit: "+err.Error())
 		return
 	}
 
@@ -194,6 +194,7 @@ func (h *Handler) Complete(c *gin.Context) {
 		Date   string `json:"date"`
 		Notes  string `json:"notes"`
 		Rating int    `json:"rating"`
+		Time   string `json:"time"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		h.responder.BadRequest(c, "Invalid request")
@@ -205,7 +206,26 @@ func (h *Handler) Complete(c *gin.Context) {
 		return
 	}
 
-	completion, err := h.service.Complete(c.Request.Context(), id, userID, workspaceID, date, req.Notes, req.Rating)
+	// Валидация rating: должен быть от 1 до 5, или 0 (не указан)
+	if req.Rating < 0 || req.Rating > 5 {
+		h.responder.BadRequest(c, "Rating must be between 0 and 5")
+		return
+	}
+
+	var timePtr *string
+	if req.Time != "" {
+		timePtr = &req.Time
+	}
+
+	// Если rating = 0, передаем NULL в базу (не указан)
+	var ratingValue interface{}
+	if req.Rating == 0 {
+		ratingValue = nil
+	} else {
+		ratingValue = req.Rating
+	}
+
+	completion, err := h.service.Complete(c.Request.Context(), id, userID, workspaceID, date, req.Notes, ratingValue, timePtr)
 	if err != nil {
 		if err == habitsService.ErrHabitNotFound {
 			h.responder.NotFound(c, "Habit not found")
@@ -288,13 +308,14 @@ func (h *Handler) GetCompletions(c *gin.Context) {
 	}
 
 	habitID := c.Query("habit_id")
-	if habitID == "" {
-		h.responder.BadRequest(c, "habit_id required")
-		return
-	}
-	if _, err := uuid.Parse(habitID); err != nil {
-		h.responder.BadRequest(c, "Invalid habit_id")
-		return
+	var habitUUID *uuid.UUID
+	if habitID != "" {
+		parsed, err := uuid.Parse(habitID)
+		if err != nil {
+			h.responder.BadRequest(c, "Invalid habit_id")
+			return
+		}
+		habitUUID = &parsed
 	}
 
 	start, end, err := parseDateRange(c.Query("start"), c.Query("end"))
@@ -303,14 +324,27 @@ func (h *Handler) GetCompletions(c *gin.Context) {
 		return
 	}
 
-	list, err := h.service.GetCompletions(c.Request.Context(), habitID, userID, workspaceID, start, end)
-	if err != nil {
-		if err == habitsService.ErrHabitNotFound {
-			h.responder.NotFound(c, "Habit not found")
+	var list []model.HabitCompletion
+	if habitUUID != nil {
+		// Запрос для конкретной привычки
+		completions, err := h.service.GetCompletions(c.Request.Context(), habitUUID.String(), userID, workspaceID, start, end)
+		if err != nil {
+			if err == habitsService.ErrHabitNotFound {
+				h.responder.NotFound(c, "Habit not found")
+				return
+			}
+			h.responder.InternalServerError(c, "Failed to get completions")
 			return
 		}
-		h.responder.InternalServerError(c, "Failed to get completions")
-		return
+		list = completions
+	} else {
+		// Запрос для всех привычек пользователя в workspace
+		completions, err := h.service.GetAllCompletions(c.Request.Context(), userID, workspaceID, start, end)
+		if err != nil {
+			h.responder.InternalServerError(c, "Failed to get completions")
+			return
+		}
+		list = completions
 	}
 
 	h.responder.SuccessWithData(c, gin.H{"completions": list})

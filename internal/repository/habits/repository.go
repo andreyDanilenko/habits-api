@@ -4,12 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
 	"backend/internal/model"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 )
 
 type Repository struct {
@@ -24,7 +26,8 @@ func (r *Repository) List(ctx context.Context, userID, workspaceID uuid.UUID) ([
 	query := `
 		SELECT 
 			id, title, description, color, icon, 
-			target_days, user_id, workspace_id, 
+			target_days, daily_goal, preferred_time, category,
+			user_id, workspace_id, 
 			created_at, updated_at
 		FROM habits 
 		WHERE user_id = $1 AND workspace_id = $2
@@ -41,6 +44,8 @@ func (r *Repository) List(ctx context.Context, userID, workspaceID uuid.UUID) ([
 	for rows.Next() {
 		var habit model.Habit
 		var createdAt, updatedAt time.Time
+		var preferredTimePtr sql.NullString
+		var categoryPtr sql.NullString
 
 		err := rows.Scan(
 			&habit.ID,
@@ -49,6 +54,9 @@ func (r *Repository) List(ctx context.Context, userID, workspaceID uuid.UUID) ([
 			&habit.Color,
 			&habit.Icon,
 			&habit.TargetDays,
+			&habit.DailyGoal,
+			&preferredTimePtr,
+			&categoryPtr,
 			&habit.UserID,
 			&habit.WorkspaceID,
 			&createdAt,
@@ -56,6 +64,13 @@ func (r *Repository) List(ctx context.Context, userID, workspaceID uuid.UUID) ([
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan habit: %w", err)
+		}
+
+		if preferredTimePtr.Valid {
+			habit.PreferredTime = preferredTimePtr.String
+		}
+		if categoryPtr.Valid {
+			habit.Category = categoryPtr.String
 		}
 
 		habit.CreatedAt = createdAt.Format(time.RFC3339)
@@ -74,27 +89,62 @@ func (r *Repository) Create(ctx context.Context, dto model.CreateHabitDto, userI
 	query := `
 		INSERT INTO habits (
 			id, title, description, color, icon, 
-			target_days, user_id, workspace_id, 
+			target_days, daily_goal, preferred_time, category,
+			user_id, workspace_id, 
 			created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		RETURNING id, title, description, color, icon, 
-			target_days, user_id, workspace_id, 
+			target_days, daily_goal, preferred_time, category,
+			user_id, workspace_id, 
 			created_at, updated_at
 	`
 
 	now := time.Now()
 	habitID := uuid.New()
 
+	// Обработка пустых значений
+	var categoryValue interface{}
+	if dto.Category != "" {
+		categoryValue = dto.Category
+	} else {
+		categoryValue = nil
+	}
+
+	var preferredTimeValue interface{}
+	if dto.PreferredTime != "" && dto.PreferredTime != "any" {
+		preferredTimeValue = dto.PreferredTime
+	} else {
+		preferredTimeValue = nil
+	}
+
 	var habit model.Habit
 	var createdAt, updatedAt time.Time
+	var preferredTimePtr sql.NullString
+	var categoryPtr sql.NullString
+
+	targetDays := dto.TargetDays
+	if targetDays == 0 {
+		targetDays = 7
+	}
+	dailyGoal := dto.DailyGoal
+	if dailyGoal == 0 {
+		dailyGoal = 1
+	}
+	color := dto.Color
+	if color == "" {
+		color = "#3B82F6"
+	}
 
 	err := r.db.QueryRowContext(ctx, query,
 		habitID,
 		dto.Title,
 		dto.Description,
-		dto.Color,
+		color,
 		dto.Icon,
-		dto.TargetDays,
+		targetDays,
+		dailyGoal,
+		preferredTimeValue,
+		categoryValue,
 		userID,
 		workspaceID,
 		now,
@@ -106,13 +156,24 @@ func (r *Repository) Create(ctx context.Context, dto model.CreateHabitDto, userI
 		&habit.Color,
 		&habit.Icon,
 		&habit.TargetDays,
+		&habit.DailyGoal,
+		&preferredTimePtr,
+		&categoryPtr,
 		&habit.UserID,
 		&habit.WorkspaceID,
 		&createdAt,
 		&updatedAt,
 	)
 	if err != nil {
+		log.Printf("Error creating habit: %v, dto: %+v", err, dto)
 		return nil, fmt.Errorf("failed to create habit: %w", err)
+	}
+
+	if preferredTimePtr.Valid {
+		habit.PreferredTime = preferredTimePtr.String
+	}
+	if categoryPtr.Valid {
+		habit.Category = categoryPtr.String
 	}
 
 	habit.CreatedAt = createdAt.Format(time.RFC3339)
@@ -125,7 +186,8 @@ func (r *Repository) Get(ctx context.Context, id, userID uuid.UUID) (*model.Habi
 	query := `
 		SELECT 
 			id, title, description, color, icon, 
-			target_days, user_id, workspace_id, 
+			target_days, daily_goal, preferred_time, category,
+			user_id, workspace_id, 
 			created_at, updated_at
 		FROM habits 
 		WHERE id = $1 AND user_id = $2
@@ -133,6 +195,8 @@ func (r *Repository) Get(ctx context.Context, id, userID uuid.UUID) (*model.Habi
 
 	var habit model.Habit
 	var createdAt, updatedAt time.Time
+	var preferredTimePtr sql.NullString
+	var categoryPtr sql.NullString
 
 	err := r.db.QueryRowContext(ctx, query, id, userID).Scan(
 		&habit.ID,
@@ -141,6 +205,9 @@ func (r *Repository) Get(ctx context.Context, id, userID uuid.UUID) (*model.Habi
 		&habit.Color,
 		&habit.Icon,
 		&habit.TargetDays,
+		&habit.DailyGoal,
+		&preferredTimePtr,
+		&categoryPtr,
 		&habit.UserID,
 		&habit.WorkspaceID,
 		&createdAt,
@@ -151,6 +218,13 @@ func (r *Repository) Get(ctx context.Context, id, userID uuid.UUID) (*model.Habi
 			return nil, nil
 		}
 		return nil, fmt.Errorf("failed to get habit: %w", err)
+	}
+
+	if preferredTimePtr.Valid {
+		habit.PreferredTime = preferredTimePtr.String
+	}
+	if categoryPtr.Valid {
+		habit.Category = categoryPtr.String
 	}
 
 	habit.CreatedAt = createdAt.Format(time.RFC3339)
@@ -164,29 +238,57 @@ func (r *Repository) Update(ctx context.Context, id, userID uuid.UUID, dto model
 	args := []interface{}{time.Now()}
 	argIndex := 2
 
-	if dto.Title != "" {
+	if dto.Title != nil {
 		updates = append(updates, fmt.Sprintf("title = $%d", argIndex))
-		args = append(args, dto.Title)
+		args = append(args, *dto.Title)
 		argIndex++
 	}
-	if dto.Description != "" {
+	if dto.Description != nil {
 		updates = append(updates, fmt.Sprintf("description = $%d", argIndex))
-		args = append(args, dto.Description)
+		args = append(args, *dto.Description)
 		argIndex++
 	}
-	if dto.Color != "" {
+	if dto.Color != nil {
 		updates = append(updates, fmt.Sprintf("color = $%d", argIndex))
-		args = append(args, dto.Color)
+		args = append(args, *dto.Color)
 		argIndex++
 	}
-	if dto.Icon != "" {
+	if dto.Icon != nil {
 		updates = append(updates, fmt.Sprintf("icon = $%d", argIndex))
-		args = append(args, dto.Icon)
+		args = append(args, *dto.Icon)
 		argIndex++
 	}
-	if dto.TargetDays > 0 {
+	if dto.TargetDays != nil && *dto.TargetDays > 0 {
 		updates = append(updates, fmt.Sprintf("target_days = $%d", argIndex))
-		args = append(args, dto.TargetDays)
+		args = append(args, *dto.TargetDays)
+		argIndex++
+	}
+	if dto.DailyGoal != nil && *dto.DailyGoal > 0 {
+		updates = append(updates, fmt.Sprintf("daily_goal = $%d", argIndex))
+		args = append(args, *dto.DailyGoal)
+		argIndex++
+	}
+	if dto.PreferredTime != nil {
+		var preferredTimeValue interface{}
+		if *dto.PreferredTime != "" && *dto.PreferredTime != "any" {
+			preferredTimeValue = *dto.PreferredTime
+		} else {
+			preferredTimeValue = nil
+		}
+		updates = append(updates, fmt.Sprintf("preferred_time = $%d", argIndex))
+		args = append(args, preferredTimeValue)
+		argIndex++
+	}
+
+	if dto.Category != nil {
+		var categoryValue interface{}
+		if *dto.Category != "" {
+			categoryValue = *dto.Category
+		} else {
+			categoryValue = nil // Пустая строка означает удаление категории
+		}
+		updates = append(updates, fmt.Sprintf("category = $%d", argIndex))
+		args = append(args, categoryValue)
 		argIndex++
 	}
 
@@ -199,7 +301,8 @@ func (r *Repository) Update(ctx context.Context, id, userID uuid.UUID, dto model
 		SET %s 
 		WHERE id = $%d AND user_id = $%d
 		RETURNING id, title, description, color, icon, 
-			target_days, user_id, workspace_id, 
+			target_days, daily_goal, preferred_time, category,
+			user_id, workspace_id, 
 			created_at, updated_at
 	`, strings.Join(updates, ", "), argIndex, argIndex+1)
 
@@ -207,6 +310,8 @@ func (r *Repository) Update(ctx context.Context, id, userID uuid.UUID, dto model
 
 	var habit model.Habit
 	var createdAt, updatedAt time.Time
+	var preferredTimePtr sql.NullString
+	var categoryPtr sql.NullString
 
 	err := r.db.QueryRowContext(ctx, query, args...).Scan(
 		&habit.ID,
@@ -215,6 +320,9 @@ func (r *Repository) Update(ctx context.Context, id, userID uuid.UUID, dto model
 		&habit.Color,
 		&habit.Icon,
 		&habit.TargetDays,
+		&habit.DailyGoal,
+		&preferredTimePtr,
+		&categoryPtr,
 		&habit.UserID,
 		&habit.WorkspaceID,
 		&createdAt,
@@ -225,6 +333,13 @@ func (r *Repository) Update(ctx context.Context, id, userID uuid.UUID, dto model
 			return nil, nil
 		}
 		return nil, fmt.Errorf("failed to update habit: %w", err)
+	}
+
+	if preferredTimePtr.Valid {
+		habit.PreferredTime = preferredTimePtr.String
+	}
+	if categoryPtr.Valid {
+		habit.Category = categoryPtr.String
 	}
 
 	habit.CreatedAt = createdAt.Format(time.RFC3339)
@@ -270,12 +385,12 @@ func (r *Repository) Delete(ctx context.Context, id, userID uuid.UUID) error {
 	return tx.Commit()
 }
 
-func (r *Repository) Complete(ctx context.Context, habitID, userID uuid.UUID, date time.Time, notes string, rating int) (*model.HabitCompletion, error) {
+func (r *Repository) Complete(ctx context.Context, habitID, userID uuid.UUID, date time.Time, notes string, rating interface{}, completionTime *string) (*model.HabitCompletion, error) {
 	query := `
 		INSERT INTO habit_completions (
-			id, habit_id, user_id, date, notes, rating, created_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7)
-		RETURNING id, habit_id, user_id, date, notes, rating, created_at
+			id, habit_id, user_id, date, notes, rating, time, created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		RETURNING id, habit_id, user_id, date, notes, rating, time, created_at
 	`
 
 	completionID := uuid.New()
@@ -283,6 +398,24 @@ func (r *Repository) Complete(ctx context.Context, habitID, userID uuid.UUID, da
 
 	var completion model.HabitCompletion
 	var completionDate, createdAt time.Time
+	var timePtr sql.NullString
+	var ratingPtr sql.NullInt64
+
+	var timeValue interface{}
+	if completionTime != nil && *completionTime != "" {
+		timeValue = *completionTime
+	} else {
+		timeValue = nil
+	}
+
+	var ratingValue interface{}
+	if rating == nil {
+		ratingValue = nil
+	} else if ratingInt, ok := rating.(int); ok && ratingInt == 0 {
+		ratingValue = nil
+	} else {
+		ratingValue = rating
+	}
 
 	err := r.db.QueryRowContext(ctx, query,
 		completionID,
@@ -290,7 +423,8 @@ func (r *Repository) Complete(ctx context.Context, habitID, userID uuid.UUID, da
 		userID,
 		date,
 		notes,
-		rating,
+		ratingValue,
+		timeValue,
 		now,
 	).Scan(
 		&completion.ID,
@@ -298,7 +432,8 @@ func (r *Repository) Complete(ctx context.Context, habitID, userID uuid.UUID, da
 		&completion.UserID,
 		&completionDate,
 		&completion.Notes,
-		&completion.Rating,
+		&ratingPtr,
+		&timePtr,
 		&createdAt,
 	)
 	if err != nil {
@@ -307,6 +442,12 @@ func (r *Repository) Complete(ctx context.Context, habitID, userID uuid.UUID, da
 
 	completion.Date = completionDate.Format("2006-01-02")
 	completion.CreatedAt = createdAt.Format(time.RFC3339)
+	if timePtr.Valid {
+		completion.Time = timePtr.String
+	}
+	if ratingPtr.Valid {
+		completion.Rating = int(ratingPtr.Int64)
+	}
 
 	return &completion, nil
 }
@@ -318,14 +459,17 @@ func (r *Repository) Toggle(ctx context.Context, habitID, userID uuid.UUID, date
 	}
 	defer tx.Rollback()
 
-	// Проверяем существующее completion
+	// Проверяем существующее completion (берем первое найденное для этой даты)
 	var existing model.HabitCompletion
 	var existingDate, createdAt time.Time
+	var timePtr sql.NullString
+	var ratingPtr sql.NullInt64
 
 	query := `
-		SELECT id, habit_id, user_id, date, notes, rating, created_at
+		SELECT id, habit_id, user_id, date, notes, rating, time, created_at
 		FROM habit_completions 
 		WHERE habit_id = $1 AND user_id = $2 AND date = $3
+		LIMIT 1
 	`
 
 	err = tx.QueryRowContext(ctx, query, habitID, userID, date).Scan(
@@ -334,14 +478,20 @@ func (r *Repository) Toggle(ctx context.Context, habitID, userID uuid.UUID, date
 		&existing.UserID,
 		&existingDate,
 		&existing.Notes,
-		&existing.Rating,
+		&ratingPtr,
+		&timePtr,
 		&createdAt,
 	)
 
 	if err == nil {
-		// Удаляем если существует
 		existing.Date = existingDate.Format("2006-01-02")
 		existing.CreatedAt = createdAt.Format(time.RFC3339)
+		if timePtr.Valid {
+			existing.Time = timePtr.String
+		}
+		if ratingPtr.Valid {
+			existing.Rating = int(ratingPtr.Int64)
+		}
 
 		_, err = tx.ExecContext(ctx,
 			"DELETE FROM habit_completions WHERE id = $1",
@@ -363,7 +513,7 @@ func (r *Repository) Toggle(ctx context.Context, habitID, userID uuid.UUID, date
 	}
 
 	// Создаем новое если не существует
-	completion, err := r.Complete(ctx, habitID, userID, date, "", 0)
+	completion, err := r.Complete(ctx, habitID, userID, date, "", 0, nil)
 	if err != nil {
 		return false, nil, err
 	}
@@ -429,10 +579,10 @@ func (r *Repository) GetStats(ctx context.Context, habitID, userID uuid.UUID) (*
 
 func (r *Repository) GetCompletions(ctx context.Context, habitID, userID uuid.UUID, startDate, endDate time.Time) ([]model.HabitCompletion, error) {
 	query := `
-		SELECT id, habit_id, user_id, date, notes, rating, created_at
+		SELECT id, habit_id, user_id, date, notes, rating, time, created_at
 		FROM habit_completions 
 		WHERE habit_id = $1 AND user_id = $2 AND date BETWEEN $3 AND $4
-		ORDER BY date DESC
+		ORDER BY date DESC, time DESC
 	`
 
 	rows, err := r.db.QueryContext(ctx, query, habitID, userID, startDate, endDate)
@@ -445,6 +595,8 @@ func (r *Repository) GetCompletions(ctx context.Context, habitID, userID uuid.UU
 	for rows.Next() {
 		var completion model.HabitCompletion
 		var completionDate, createdAt time.Time
+		var timePtr sql.NullString
+		var ratingPtr sql.NullInt64
 
 		err := rows.Scan(
 			&completion.ID,
@@ -452,7 +604,8 @@ func (r *Repository) GetCompletions(ctx context.Context, habitID, userID uuid.UU
 			&completion.UserID,
 			&completionDate,
 			&completion.Notes,
-			&completion.Rating,
+			&ratingPtr,
+			&timePtr,
 			&createdAt,
 		)
 		if err != nil {
@@ -461,6 +614,66 @@ func (r *Repository) GetCompletions(ctx context.Context, habitID, userID uuid.UU
 
 		completion.Date = completionDate.Format("2006-01-02")
 		completion.CreatedAt = createdAt.Format(time.RFC3339)
+		if timePtr.Valid {
+			completion.Time = timePtr.String
+		}
+		if ratingPtr.Valid {
+			completion.Rating = int(ratingPtr.Int64)
+		}
+		completions = append(completions, completion)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows iteration error: %w", err)
+	}
+
+	return completions, nil
+}
+
+func (r *Repository) GetAllCompletions(ctx context.Context, userID, workspaceID uuid.UUID, startDate, endDate time.Time) ([]model.HabitCompletion, error) {
+	query := `
+		SELECT hc.id, hc.habit_id, hc.user_id, hc.date, hc.notes, hc.rating, hc.time, hc.created_at
+		FROM habit_completions hc
+		INNER JOIN habits h ON hc.habit_id = h.id
+		WHERE hc.user_id = $1 AND h.workspace_id = $2 AND hc.date BETWEEN $3 AND $4
+		ORDER BY hc.date DESC, hc.time DESC
+	`
+
+	rows, err := r.db.QueryContext(ctx, query, userID, workspaceID, startDate, endDate)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query completions: %w", err)
+	}
+	defer rows.Close()
+
+	var completions []model.HabitCompletion
+	for rows.Next() {
+		var completion model.HabitCompletion
+		var completionDate, createdAt time.Time
+		var timePtr sql.NullString
+		var ratingPtr sql.NullInt64
+
+		err := rows.Scan(
+			&completion.ID,
+			&completion.HabitID,
+			&completion.UserID,
+			&completionDate,
+			&completion.Notes,
+			&ratingPtr,
+			&timePtr,
+			&createdAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan completion: %w", err)
+		}
+
+		completion.Date = completionDate.Format("2006-01-02")
+		completion.CreatedAt = createdAt.Format(time.RFC3339)
+		if timePtr.Valid {
+			completion.Time = timePtr.String
+		}
+		if ratingPtr.Valid {
+			completion.Rating = int(ratingPtr.Int64)
+		}
 		completions = append(completions, completion)
 	}
 
@@ -511,13 +724,14 @@ func (r *Repository) GetCalendar(ctx context.Context, userID, workspaceID uuid.U
 	}
 
 	// Получаем completion за период
+	// Используем pq.Array для корректной передачи массива UUID в PostgreSQL
 	completionsQuery := `
 		SELECT habit_id, date
 		FROM habit_completions 
-		WHERE user_id = $1 AND habit_id = ANY($2) AND date BETWEEN $3 AND $4
+		WHERE user_id = $1 AND habit_id = ANY($2::uuid[]) AND date BETWEEN $3 AND $4
 	`
 
-	rows, err = r.db.QueryContext(ctx, completionsQuery, userID, habitIDs, startDate, endDate)
+	rows, err = r.db.QueryContext(ctx, completionsQuery, userID, pq.Array(habitIDs), startDate, endDate)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query completions: %w", err)
 	}

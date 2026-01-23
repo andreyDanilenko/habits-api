@@ -39,14 +39,14 @@ type CreateHabitDto struct {
 }
 
 type UpdateHabitDto struct {
-	Title         string `json:"title,omitempty"`
-	Description   string `json:"description,omitempty"`
-	Color         string `json:"color,omitempty"`
-	Icon          string `json:"icon,omitempty"`
-	TargetDays    int    `json:"targetDays,omitempty"`
-	DailyGoal     int    `json:"dailyGoal,omitempty"`
-	PreferredTime string `json:"preferredTime,omitempty"`
-	Category      string `json:"category,omitempty"`
+	Title         *string `json:"title,omitempty"`
+	Description   *string `json:"description,omitempty"`
+	Color         *string `json:"color,omitempty"`
+	Icon          *string `json:"icon,omitempty"`
+	TargetDays    *int    `json:"targetDays,omitempty"`
+	DailyGoal     *int    `json:"dailyGoal,omitempty"`
+	PreferredTime *string `json:"preferredTime,omitempty"`
+	Category      *string `json:"category,omitempty"`
 }
 
 type HabitStats struct {
