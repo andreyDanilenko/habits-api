@@ -373,40 +373,39 @@ func (h *Handler) GetCalendar(c *gin.Context) {
 
 func parseDate(s string) (time.Time, error) {
 	if s == "" {
-		// Нормализуем текущую дату до начала дня
-		now := time.Now()
-		return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()), nil
+		now := time.Now().UTC()
+		return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC), nil
 	}
 	parsed, err := time.Parse("2006-01-02", s)
 	if err != nil {
 		return time.Time{}, err
 	}
-	// Нормализуем дату до начала дня
-	return time.Date(parsed.Year(), parsed.Month(), parsed.Day(), 0, 0, 0, 0, parsed.Location()), nil
+	utc := parsed.UTC()
+	return time.Date(utc.Year(), utc.Month(), utc.Day(), 0, 0, 0, 0, time.UTC), nil
 }
 
 func parseDateRange(startS, endS string) (start, end time.Time, err error) {
 	if startS == "" || endS == "" {
-		now := time.Now()
-		start = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
-		// Нормализуем end до начала дня
-		end = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+		now := time.Now().UTC()
+		start = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+		// Нормализуем end до начала дня в UTC
+		end = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 		return start, end, nil
 	}
 	start, err = time.Parse("2006-01-02", startS)
 	if err != nil {
 		return time.Time{}, time.Time{}, err
 	}
-	// Нормализуем start до начала дня
-	start = time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, start.Location())
-	
+	startUTC := start.UTC()
+	start = time.Date(startUTC.Year(), startUTC.Month(), startUTC.Day(), 0, 0, 0, 0, time.UTC)
+
 	end, err = time.Parse("2006-01-02", endS)
 	if err != nil {
 		return time.Time{}, time.Time{}, err
 	}
-	// Нормализуем end до начала дня
-	end = time.Date(end.Year(), end.Month(), end.Day(), 0, 0, 0, 0, end.Location())
-	
+	endUTC := end.UTC()
+	end = time.Date(endUTC.Year(), endUTC.Month(), endUTC.Day(), 0, 0, 0, 0, time.UTC)
+
 	if end.Before(start) {
 		start, end = end, start
 	}

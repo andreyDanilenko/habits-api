@@ -23,8 +23,9 @@ func NewRepository(db *sql.DB) *Repository {
 }
 
 func normalizeDate(t time.Time) time.Time {
-	year, month, day := t.Date()
-	return time.Date(year, month, day, 0, 0, 0, 0, t.Location())
+	utc := t.UTC()
+	year, month, day := utc.Date()
+	return time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
 }
 
 func (r *Repository) List(ctx context.Context, userID, workspaceID uuid.UUID) ([]model.Habit, error) {
@@ -104,7 +105,7 @@ func (r *Repository) Create(ctx context.Context, dto model.CreateHabitDto, userI
 			created_at, updated_at
 	`
 
-	now := time.Now()
+	now := time.Now().UTC()
 	habitID := uuid.New()
 
 	// Обработка пустых значений
@@ -240,7 +241,7 @@ func (r *Repository) Get(ctx context.Context, id, userID uuid.UUID) (*model.Habi
 
 func (r *Repository) Update(ctx context.Context, id, userID uuid.UUID, dto model.UpdateHabitDto) (*model.Habit, error) {
 	updates := []string{"updated_at = $1"}
-	args := []interface{}{time.Now()}
+	args := []interface{}{time.Now().UTC()}
 	argIndex := 2
 
 	if dto.Title != nil {
@@ -399,7 +400,7 @@ func (r *Repository) Complete(ctx context.Context, habitID, userID uuid.UUID, da
 	`
 
 	completionID := uuid.New()
-	now := time.Now()
+	now := time.Now().UTC()
 	// Нормализуем дату до начала дня для корректного сравнения с полем DATE
 	normalizedDate := normalizeDate(date)
 
@@ -549,9 +550,10 @@ func (r *Repository) GetStats(ctx context.Context, habitID, userID uuid.UUID) (*
 		return nil, fmt.Errorf("failed to get habit: %w", err)
 	}
 
-	// Вычисляем общее количество дней
-	today := time.Now()
-	totalDays := int(today.Sub(createdAt).Hours()/24) + 1
+	// Вычисляем общее количество дней (используем UTC)
+	today := time.Now().UTC()
+	createdAtUTC := createdAt.UTC()
+	totalDays := int(today.Sub(createdAtUTC).Hours()/24) + 1
 	if totalDays < 1 {
 		totalDays = 1
 	}
@@ -566,9 +568,105 @@ func (r *Repository) GetStats(ctx context.Context, habitID, userID uuid.UUID) (*
 		return nil, fmt.Errorf("failed to count completions: %w", err)
 	}
 
+	// Получаем все даты выполнений, отсортированные по убыванию
+	completionsQuery := `
+		SELECT DISTINCT date 
+		FROM habit_completions 
+		WHERE habit_id = $1 AND user_id = $2 
+		ORDER BY date DESC
+	`
+	rows, err := r.db.QueryContext(ctx, completionsQuery, habitID, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query completion dates: %w", err)
+	}
+	defer rows.Close()
+
+	var completionDates []time.Time
+	for rows.Next() {
+		var date time.Time
+		if err := rows.Scan(&date); err != nil {
+			return nil, fmt.Errorf("failed to scan date: %w", err)
+		}
+		completionDates = append(completionDates, date.UTC())
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows iteration error: %w", err)
+	}
+
 	// Вычисляем серии (streaks)
 	var currentStreak, longestStreak int
-	// TODO: Реализовать более эффективный расчет серий
+
+	if len(completionDates) > 0 {
+		// Нормализуем сегодняшнюю дату до начала дня в UTC
+		todayNormalized := normalizeDate(today)
+
+		// Создаем map для быстрого поиска дат выполнений
+		completionMap := make(map[string]bool)
+		for _, completionDate := range completionDates {
+			normalized := normalizeDate(completionDate)
+			dateKey := normalized.Format("2006-01-02")
+			completionMap[dateKey] = true
+		}
+
+		// Вычисляем currentStreak (от сегодня назад)
+		currentStreak = 0
+		checkDate := todayNormalized
+		for {
+			dateKey := checkDate.Format("2006-01-02")
+			if completionMap[dateKey] {
+				currentStreak++
+				checkDate = checkDate.AddDate(0, 0, -1) // Переходим к предыдущему дню
+			} else {
+				// Если сегодня нет выполнения, streak = 0
+				// Если пропущен день в середине, streak прерывается
+				break
+			}
+		}
+
+		// Вычисляем longestStreak (самая длинная последовательность)
+		// Сортируем даты по возрастанию
+		sortedDates := make([]time.Time, len(completionDates))
+		copy(sortedDates, completionDates)
+		// Сортируем вручную (простая сортировка пузырьком для небольшого количества дат)
+		for i := 0; i < len(sortedDates)-1; i++ {
+			for j := 0; j < len(sortedDates)-i-1; j++ {
+				date1 := normalizeDate(sortedDates[j])
+				date2 := normalizeDate(sortedDates[j+1])
+				if date1.After(date2) {
+					sortedDates[j], sortedDates[j+1] = sortedDates[j+1], sortedDates[j]
+				}
+			}
+		}
+
+		longestStreak = 0
+		currentSequence := 0
+		var prevDate time.Time
+
+		for _, date := range sortedDates {
+			normalized := normalizeDate(date)
+			if prevDate.IsZero() {
+				currentSequence = 1
+				prevDate = normalized
+			} else {
+				// Проверяем, что даты идут подряд
+				expectedDate := prevDate.AddDate(0, 0, 1)
+				if normalized.Equal(expectedDate) {
+					currentSequence++
+				} else {
+					// Последовательность прервалась
+					if currentSequence > longestStreak {
+						longestStreak = currentSequence
+					}
+					currentSequence = 1
+				}
+				prevDate = normalized
+			}
+		}
+		// Проверяем последнюю последовательность
+		if currentSequence > longestStreak {
+			longestStreak = currentSequence
+		}
+	}
 
 	completionRate := 0.0
 	if totalDays > 0 {
