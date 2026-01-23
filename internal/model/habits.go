@@ -76,3 +76,27 @@ type ToggleResponse struct {
 	Completed  bool             `json:"completed"`
 	Completion *HabitCompletion `json:"completion,omitempty"`
 }
+
+// HabitHistory - история изменений привычки
+type HabitHistory struct {
+	ID        string                 `json:"id" db:"id"`
+	HabitID   string                 `json:"habitId" db:"habit_id"`
+	UserID    string                 `json:"userId" db:"user_id"`
+	Action    string                 `json:"action" db:"action"` // CREATED, UPDATED, DELETED, COMPLETED
+	Changes   map[string]interface{} `json:"changes,omitempty" db:"changes"`
+	Metadata  map[string]interface{} `json:"metadata,omitempty" db:"metadata"`
+	CreatedAt string                 `json:"createdAt" db:"created_at"`
+}
+
+// Activity - активность пользователя для виджета RecentActivity
+type Activity struct {
+	ID          string `json:"id" db:"id"`
+	UserID      string `json:"userId" db:"user_id"`
+	WorkspaceID string `json:"workspaceId" db:"workspace_id"`
+	Type        string `json:"type" db:"type"` // HABIT_CREATED, HABIT_UPDATED, HABIT_DELETED, HABIT_COMPLETED
+	EntityType  string `json:"entityType" db:"entity_type"` // habit, completion, workspace
+	EntityID    string `json:"entityId" db:"entity_id"`
+	Title       string `json:"title" db:"title"`
+	Emoji       string `json:"emoji,omitempty" db:"emoji"`
+	CreatedAt   string `json:"createdAt" db:"created_at"`
+}

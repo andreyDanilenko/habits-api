@@ -22,6 +22,11 @@ func NewRepository(db *sql.DB) *Repository {
 	return &Repository{db: db}
 }
 
+func normalizeDate(t time.Time) time.Time {
+	year, month, day := t.Date()
+	return time.Date(year, month, day, 0, 0, 0, 0, t.Location())
+}
+
 func (r *Repository) List(ctx context.Context, userID, workspaceID uuid.UUID) ([]model.Habit, error) {
 	query := `
 		SELECT 
@@ -395,6 +400,8 @@ func (r *Repository) Complete(ctx context.Context, habitID, userID uuid.UUID, da
 
 	completionID := uuid.New()
 	now := time.Now()
+	// Нормализуем дату до начала дня для корректного сравнения с полем DATE
+	normalizedDate := normalizeDate(date)
 
 	var completion model.HabitCompletion
 	var completionDate, createdAt time.Time
@@ -421,7 +428,7 @@ func (r *Repository) Complete(ctx context.Context, habitID, userID uuid.UUID, da
 		completionID,
 		habitID,
 		userID,
-		date,
+		normalizedDate,
 		notes,
 		ratingValue,
 		timeValue,
@@ -459,6 +466,9 @@ func (r *Repository) Toggle(ctx context.Context, habitID, userID uuid.UUID, date
 	}
 	defer tx.Rollback()
 
+	// Нормализуем дату до начала дня для корректного сравнения с полем DATE
+	normalizedDate := normalizeDate(date)
+
 	// Проверяем существующее completion (берем первое найденное для этой даты)
 	var existing model.HabitCompletion
 	var existingDate, createdAt time.Time
@@ -472,7 +482,7 @@ func (r *Repository) Toggle(ctx context.Context, habitID, userID uuid.UUID, date
 		LIMIT 1
 	`
 
-	err = tx.QueryRowContext(ctx, query, habitID, userID, date).Scan(
+	err = tx.QueryRowContext(ctx, query, habitID, userID, normalizedDate).Scan(
 		&existing.ID,
 		&existing.HabitID,
 		&existing.UserID,
@@ -513,7 +523,7 @@ func (r *Repository) Toggle(ctx context.Context, habitID, userID uuid.UUID, date
 	}
 
 	// Создаем новое если не существует
-	completion, err := r.Complete(ctx, habitID, userID, date, "", 0, nil)
+	completion, err := r.Complete(ctx, habitID, userID, normalizedDate, "", 0, nil)
 	if err != nil {
 		return false, nil, err
 	}
@@ -585,7 +595,11 @@ func (r *Repository) GetCompletions(ctx context.Context, habitID, userID uuid.UU
 		ORDER BY date DESC, time DESC
 	`
 
-	rows, err := r.db.QueryContext(ctx, query, habitID, userID, startDate, endDate)
+	// Нормализуем даты до начала дня для корректного сравнения с полем DATE
+	normalizedStart := normalizeDate(startDate)
+	normalizedEnd := normalizeDate(endDate)
+
+	rows, err := r.db.QueryContext(ctx, query, habitID, userID, normalizedStart, normalizedEnd)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query completions: %w", err)
 	}
@@ -639,7 +653,11 @@ func (r *Repository) GetAllCompletions(ctx context.Context, userID, workspaceID 
 		ORDER BY hc.date DESC, hc.time DESC
 	`
 
-	rows, err := r.db.QueryContext(ctx, query, userID, workspaceID, startDate, endDate)
+	// Нормализуем даты до начала дня для корректного сравнения с полем DATE
+	normalizedStart := normalizeDate(startDate)
+	normalizedEnd := normalizeDate(endDate)
+
+	rows, err := r.db.QueryContext(ctx, query, userID, workspaceID, normalizedStart, normalizedEnd)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query completions: %w", err)
 	}
@@ -725,13 +743,17 @@ func (r *Repository) GetCalendar(ctx context.Context, userID, workspaceID uuid.U
 
 	// Получаем completion за период
 	// Используем pq.Array для корректной передачи массива UUID в PostgreSQL
+	// Нормализуем даты до начала дня для корректного сравнения с полем DATE
+	normalizedStart := normalizeDate(startDate)
+	normalizedEnd := normalizeDate(endDate)
+
 	completionsQuery := `
 		SELECT habit_id, date
 		FROM habit_completions 
 		WHERE user_id = $1 AND habit_id = ANY($2::uuid[]) AND date BETWEEN $3 AND $4
 	`
 
-	rows, err = r.db.QueryContext(ctx, completionsQuery, userID, pq.Array(habitIDs), startDate, endDate)
+	rows, err = r.db.QueryContext(ctx, completionsQuery, userID, pq.Array(habitIDs), normalizedStart, normalizedEnd)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query completions: %w", err)
 	}
@@ -756,8 +778,9 @@ func (r *Repository) GetCalendar(ctx context.Context, userID, workspaceID uuid.U
 
 	// Генерируем дни календаря
 	days := make([]model.CalendarDay, 0)
-	current := startDate
-	for !current.After(endDate) {
+	current := normalizedStart
+	normalizedEndDate := normalizedEnd
+	for !current.After(normalizedEndDate) {
 		dateKey := current.Format("2006-01-02")
 
 		dayHabits := make([]struct {

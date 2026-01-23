@@ -373,26 +373,40 @@ func (h *Handler) GetCalendar(c *gin.Context) {
 
 func parseDate(s string) (time.Time, error) {
 	if s == "" {
-		return time.Now().Truncate(24 * time.Hour), nil
+		// Нормализуем текущую дату до начала дня
+		now := time.Now()
+		return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()), nil
 	}
-	return time.Parse("2006-01-02", s)
+	parsed, err := time.Parse("2006-01-02", s)
+	if err != nil {
+		return time.Time{}, err
+	}
+	// Нормализуем дату до начала дня
+	return time.Date(parsed.Year(), parsed.Month(), parsed.Day(), 0, 0, 0, 0, parsed.Location()), nil
 }
 
 func parseDateRange(startS, endS string) (start, end time.Time, err error) {
 	if startS == "" || endS == "" {
 		now := time.Now()
 		start = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
-		end = now
+		// Нормализуем end до начала дня
+		end = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 		return start, end, nil
 	}
 	start, err = time.Parse("2006-01-02", startS)
 	if err != nil {
 		return time.Time{}, time.Time{}, err
 	}
+	// Нормализуем start до начала дня
+	start = time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, start.Location())
+	
 	end, err = time.Parse("2006-01-02", endS)
 	if err != nil {
 		return time.Time{}, time.Time{}, err
 	}
+	// Нормализуем end до начала дня
+	end = time.Date(end.Year(), end.Month(), end.Day(), 0, 0, 0, 0, end.Location())
+	
 	if end.Before(start) {
 		start, end = end, start
 	}
