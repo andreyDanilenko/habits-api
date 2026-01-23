@@ -12,8 +12,9 @@ import (
 )
 
 const (
-	GinUserIDKey = "user_id"
-	GinRoleKey   = "role"
+	GinUserIDKey      = "user_id"
+	GinRoleKey        = "role"
+	GinWorkspaceIDKey = "workspace_id"
 )
 
 func GinAuthMiddleware(tokenGen *token.Generator, responder *response.Responder) gin.HandlerFunc {
