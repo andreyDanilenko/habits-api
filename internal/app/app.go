@@ -42,7 +42,8 @@ func New(cfg *config.Config) (*App, error) {
 	logProcessor.Start(context.Background())
 
 	return &App{
-		cfg:          cfg,
+		cfg: cfg,
+
 		router:       r,
 		logProcessor: logProcessor,
 		logService:   container,

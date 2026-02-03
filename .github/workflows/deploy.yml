@@ -1,0 +1,55 @@
+name: Deploy Habit Api
+
+on:
+  push:
+    branches:
+      - master
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy to server
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.DEPLOY_SECRET_KEY }}
+          script: |
+            # Переходим в папку проекта
+            cd /root/project/habit-api || mkdir -p /root/project/habits-api && cd /root/project/habits-api
+            
+            echo "=== Обновляем репозиторий habits-client ==="
+            
+            # Удаляем блок с SSH - используем только HTTPS
+            
+            # ЕСЛИ ПАПКА ПУСТАЯ - КЛОНИРУЕМ ЧЕРЕЗ HTTPS
+            if [ ! -d ".git" ]; then
+              echo "❌ Git репозиторий не найден. Клонируем..."
+              rm -rf ./* 2>/dev/null || true
+              git clone https://github.com/andreyDanilenko/habits-api.git .
+            else
+              echo "✅ Git репозиторий найден. Обновляем..."
+              # Меняем remote на HTTPS если он был SSH
+              git remote set-url origin https://github.com/andreyDanilenko/habits-api.git
+              git fetch --all
+              git reset --hard origin/master 2>/dev/null || git reset --hard origin/main
+              git pull origin master 2>/dev/null || git pull origin main
+            fi
+            
+            echo "=== Проверяем изменения ==="
+            git log --oneline -3
+            echo "Текущая ветка: $(git branch --show-current)"
+            
+            echo "=== Содержимое папки ==="
+            ls -la
+            
+            # Если нужно запустить деплой приложения, добавьте здесь:
+            # if [ -f "package.json" ]; then
+            #   echo "Устанавливаем зависимости..."
+            #   npm install
+            #   npm run build
+            # fi

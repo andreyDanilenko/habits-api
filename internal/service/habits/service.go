@@ -24,7 +24,7 @@ func NewService(repo *habits.Repository) *Service {
 	return &Service{repo: repo}
 }
 
-func (s *Service) List(ctx context.Context, userID, workspaceID string) ([]model.Habit, error) {
+func (s *Service) List(ctx context.Context, userID, workspaceID string, targetDate *time.Time) ([]model.Habit, error) {
 	if workspaceID == "" {
 		return nil, ErrWorkspaceNeeded
 	}
@@ -36,7 +36,7 @@ func (s *Service) List(ctx context.Context, userID, workspaceID string) ([]model
 	if err != nil {
 		return nil, err
 	}
-	return s.repo.List(ctx, uid, wid)
+	return s.repo.List(ctx, uid, wid, targetDate)
 }
 
 func (s *Service) Create(ctx context.Context, dto model.CreateHabitDto, userID, workspaceID string) (*model.Habit, error) {

@@ -63,7 +63,17 @@ func (h *Handler) List(c *gin.Context) {
 		return
 	}
 
-	list, err := h.service.List(c.Request.Context(), userID, workspaceID)
+	var targetDate *time.Time
+	if dateStr := c.Query("date"); dateStr != "" {
+		parsedDate, err := time.Parse("2006-01-02", dateStr)
+		if err != nil {
+			h.responder.BadRequest(c, "Invalid date format. Use YYYY-MM-DD")
+			return
+		}
+		targetDate = &parsedDate
+	}
+
+	list, err := h.service.List(c.Request.Context(), userID, workspaceID, targetDate)
 	if err != nil {
 		h.responder.InternalServerError(c, "Failed to list habits")
 		return
