@@ -1,12 +1,18 @@
-# Backend API
+# Habits API (backend for habits.lifedream.tech)
 
-Go бекенд с архитектурой, подготовленной для масштабирования в микросервисы.
+REST API for the Habits ERP module. **Live:** [habits.lifedream.tech](https://habits.lifedream.tech)
 
-## Технологии
+**Deploy (all projects):** [deployment](../deployment/README.md) · **Frontend:** [habits-client](../frontend/README.md)
 
-- **Go 1.25.3** - язык программирования
-- **Gin** - веб-фреймворк
-- **godotenv** - загрузка переменных окружения
+## Stack
+
+| Layer | Tech |
+|------|------|
+| Backend | Go, Gin, PostgreSQL |
+
+- **Go** — language
+- **Gin** — web framework
+- **godotenv** — env loading
 
 ## Структура проекта
 
@@ -47,7 +53,7 @@ go build -o bin/backend ./cmd/api
 ./bin/backend
 ```
 
-Сервер будет доступен по адресу `http://localhost:8080`
+Server at `http://localhost:8080`. **Deploy:** full stack is deployed from the [deployment](../deployment/README.md) repo (`habits-api` + `habits` frontend + Nginx).
 
 ## Переменные окружения
 
