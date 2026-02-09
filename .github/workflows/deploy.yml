@@ -19,6 +19,7 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.DEPLOY_SECRET_KEY }}
           script: |
+            # Только обновление кода по git. Контейнеры запускает только deployment workflow.
             # Переходим в папку проекта
             cd /root/project/habit-api || mkdir -p /root/project/habits-api && cd /root/project/habits-api
             
