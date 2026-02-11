@@ -646,8 +646,929 @@ DATE_TRUNC('minute', TIMESTAMP '2024-01-15 08:55:30') -- 2024-01-15 08:55:00
 | **TRIM(s)** | удалить пробелы с концов | `TRIM(' abc ') → 'abc'` |
 | **LTRIM(s)** | удалить пробелы слева | `LTRIM(' abc') → 'abc'` |
 | **RTRIM(s)** | удалить пробелы справа | `RTRIM('abc ') → 'abc'` |
-| **REPLACE(s,
+| **REPLACE(s, from, to)** | замена подстроки | `REPLACE('abc', 'b', 'x') → 'axc'` |
+| **INSTR(s, substr)** | позиция подстроки | `INSTR('abcdef', 'cde') → 3` |
+| **POSITION(substr IN s)** | позиция подстроки | `POSITION('cde' IN 'abcdef') → 3` |
+| **LOCATE(substr, s)** | позиция подстроки | `LOCATE('cde', 'abcdef') → 3` |
+| **REVERSE(s)** | переворот строки | `REVERSE('abc') → 'cba'` |
+| **REPEAT(s, n)** | повторение строки | `REPEAT('ab', 3) → 'ababab'` |
+| **LPAD(s, len, pad)** | заполнение слева | `LPAD('5', 3, '0') → '005'` |
+| **RPAD(s, len, pad)** | заполнение справа | `RPAD('5', 3, '0') → '500'` |
+| **FORMAT(n, k)** | формат числа | `FORMAT(1234.5, 2) → '1,234.50'` |
+| **ASCII(c)** | ASCII код символа | `ASCII('A') → 65` |
+| **CHAR(n)** | символ по ASCII коду | `CHAR(65) → 'A'` |
+| **STRCMP(s1, s2)** | сравнение строк | `STRCMP('a', 'b') → -1` |
+| **FIELD(s, s1, s2, ...)** | позиция в списке | `FIELD('b', 'a', 'b', 'c') → 2` |
 
+### Продвинутая работа со строками
+
+```sql
+-- Разделение строки (PostgreSQL)
+SELECT UNNEST(STRING_TO_ARRAY('a,b,c', ','));  -- 'a', 'b', 'c' как строки
+SELECT REGEXP_SPLIT_TO_TABLE('a1b2c3', '\d');   -- 'a', 'b', 'c'
+
+-- Сборка в строку (PostgreSQL)
+SELECT STRING_AGG(name, ', ' ORDER BY name) FROM authors;
+SELECT ARRAY_TO_STRING(ARRAY['a', 'b', 'c'], '; ') → 'a; b; c'
+
+-- Разделение строки (MySQL)
+SELECT SUBSTRING_INDEX('a,b,c', ',', 2) → 'a,b'
+SELECT SUBSTRING_INDEX(SUBSTRING_INDEX('a,b,c', ',', 2), ',', -1) → 'b'
+
+-- Форматирование с printf (SQLite)
+SELECT printf('%s %i %s', 'a', 123, NULL);  -- 'a 123 ' (NULL → пустая строка)
+SELECT printf('%s %i %i', 'a', 123, NULL);  -- 'a 123 0' (NULL → 0)
+
+-- Поиск и замена
+SELECT REPLACE('The quick brown fox', ' ', '-');  -- 'The-quick-brown-fox'
+SELECT TRANSLATE('12345', '135', '246');          -- '22444' (побуквенная замена)
+
+-- Регулярные выражения
+SELECT REGEXP_REPLACE('abc123def', '[0-9]', '');  -- 'abcdef'
+SELECT REGEXP_SUBSTR('abc123def', '[0-9]+');      -- '123'
+```
+
+---
+
+## 🗄️ DDL — ОПРЕДЕЛЕНИЕ ДАННЫХ
+
+### CREATE TABLE — создание таблицы
+```sql
+CREATE TABLE [IF NOT EXISTS] author (
+    author_id INT PRIMARY KEY AUTO_INCREMENT,
+    name_author VARCHAR(50) NOT NULL,
+    birth_year INT,
+    country VARCHAR(50) DEFAULT 'Россия',
+    biography TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_name (name_author)
+) ENGINE = InnoDB, CHARSET = utf8mb4;
+
+CREATE TABLE book (
+    book_id INT PRIMARY KEY AUTO_INCREMENT,
+    title VARCHAR(100) NOT NULL,
+    author_id INT NOT NULL,
+    genre_id INT,
+    price DECIMAL(8,2) CHECK (price > 0),
+    amount INT DEFAULT 0,
+    pages INT,
+    isbn VARCHAR(13) UNIQUE,
+    FOREIGN KEY (author_id) REFERENCES author(author_id) 
+        ON DELETE CASCADE 
+        ON UPDATE CASCADE,
+    FOREIGN KEY (genre_id) REFERENCES genre(genre_id)
+        ON DELETE SET NULL,
+    INDEX idx_title (title),
+    INDEX idx_author (author_id),
+    CONSTRAINT price_positive CHECK (price >= 0),
+    CONSTRAINT amount_nonnegative CHECK (amount >= 0)
+);
+
+-- Создание таблицы на основе SELECT
+CREATE TABLE book_copy AS
+SELECT book_id, title, author_id, price
+FROM book
+WHERE amount > 0;
+
+CREATE TABLE ordering AS
+SELECT author, title, 5 AS amount
+FROM book
+WHERE amount < 4;
+```
+
+### ALTER TABLE — изменение таблицы
+```sql
+-- Добавление столбца
+ALTER TABLE book 
+ADD COLUMN pages INT NOT NULL DEFAULT 0,
+ADD COLUMN description TEXT,
+ADD COLUMN publisher VARCHAR(50) AFTER title;
+
+-- Изменение столбца
+ALTER TABLE book 
+MODIFY COLUMN price DECIMAL(10,2) NOT NULL,
+MODIFY COLUMN title VARCHAR(200),
+CHANGE COLUMN pages page_count INT;  -- переименование
+
+-- Переименование столбца
+ALTER TABLE book 
+RENAME COLUMN title TO book_title;
+
+-- Удаление столбца
+ALTER TABLE book 
+DROP COLUMN old_column,
+DROP COLUMN temporary;
+
+-- Добавление ограничений
+ALTER TABLE book 
+ADD PRIMARY KEY (book_id),
+ADD UNIQUE INDEX idx_isbn (isbn),
+ADD FOREIGN KEY (author_id) REFERENCES author(author_id),
+ADD CONSTRAINT price_positive CHECK (price > 0),
+ADD INDEX idx_title_amount (title, amount);
+
+-- Удаление ограничений
+ALTER TABLE book 
+DROP PRIMARY KEY,
+DROP FOREIGN KEY fk_author,
+DROP INDEX idx_isbn,
+DROP CONSTRAINT price_positive;
+
+-- Добавление внешнего ключа с именем
+ALTER TABLE book
+ADD CONSTRAINT fk_book_author 
+FOREIGN KEY (author_id) REFERENCES author(author_id)
+ON DELETE CASCADE;
+
+-- Удаление внешнего ключа
+ALTER TABLE book 
+DROP FOREIGN KEY fk_book_author;
+
+-- Переименование таблицы
+ALTER TABLE book 
+RENAME TO books;
+
+ALTER TABLE books 
+RENAME TO book;
+```
+
+### DROP TABLE — удаление таблицы
+```sql
+DROP TABLE IF EXISTS temp_table;
+DROP TABLE author, book CASCADE;
+```
+
+### TRUNCATE TABLE — очистка таблицы
+```sql
+TRUNCATE TABLE temp_log;  -- быстрее DELETE, сбрасывает AUTO_INCREMENT
+```
+
+### CREATE INDEX — создание индексов
+```sql
+-- Обычный индекс
+CREATE INDEX idx_author_name ON author(name_author);
+CREATE INDEX idx_book_price ON book(price);
+CREATE INDEX idx_book_author_genre ON book(author_id, genre_id);
+
+-- Уникальный индекс
+CREATE UNIQUE INDEX idx_book_isbn ON book(isbn);
+CREATE UNIQUE INDEX idx_author_name_unique ON author(name_author);
+
+-- Полнотекстовый индекс (MySQL)
+CREATE FULLTEXT INDEX idx_book_title_desc ON book(title, description);
+
+-- Частичный индекс (PostgreSQL, SQLite)
+CREATE INDEX idx_partial ON book(price) WHERE amount > 0;
+
+-- Индекс на выражение (PostgreSQL, SQLite)
+CREATE INDEX idx_expression ON book((price * amount));
+CREATE INDEX idx_lower_title ON book((LOWER(title)));
+
+-- Удаление индекса
+DROP INDEX idx_author_name ON author;
+DROP INDEX idx_book_price ON book;
+```
+
+### VIEW — представления
+```sql
+-- Создание представления
+CREATE VIEW view_available_books AS
+SELECT 
+    b.book_id,
+    b.title,
+    a.name_author,
+    b.price,
+    b.amount
+FROM book b
+JOIN author a ON b.author_id = a.author_id
+WHERE b.amount > 0;
+
+-- С представлением можно работать как с таблицей
+SELECT * FROM view_available_books WHERE price < 500;
+
+-- Обновляемое представление
+CREATE VIEW view_book_prices AS
+SELECT book_id, title, price, price * 1.1 AS new_price
+FROM book;
+
+-- Замена представления
+CREATE OR REPLACE VIEW view_available_books AS
+SELECT b.book_id, b.title, a.name_author, b.price, b.amount, g.name_genre
+FROM book b
+JOIN author a ON b.author_id = a.author_id
+LEFT JOIN genre g ON b.genre_id = g.genre_id
+WHERE b.amount > 0;
+
+-- Удаление представления
+DROP VIEW IF EXISTS view_available_books;
+
+-- Информация о представлении
+DESCRIBE view_available_books;
+SHOW CREATE VIEW view_available_books;
+```
+
+### MATERIALIZED VIEW — материализованные представления (PostgreSQL)
+```sql
+-- Создание материализованного представления (хранит данные физически)
+CREATE MATERIALIZED VIEW mv_book_stats AS
+SELECT 
+    author_id,
+    COUNT(*) AS book_count,
+    AVG(price) AS avg_price,
+    SUM(amount) AS total_copies
+FROM book
+GROUP BY author_id;
+
+-- Обновление данных
+REFRESH MATERIALIZED VIEW mv_book_stats;
+REFRESH MATERIALIZED VIEW CONCURRENTLY mv_book_stats;  -- без блокировки
+
+-- Удаление
+DROP MATERIALIZED VIEW mv_book_stats;
+```
+
+---
+
+## 📋 DML — МАНИПУЛЯЦИЯ ДАННЫМИ
+
+### INSERT — добавление записей
+```sql
+-- Вставка одной записи
+INSERT INTO author (name_author, birth_year, country)
+VALUES ('Булгаков М.А.', 1891, 'Россия');
+
+-- Вставка нескольких записей
+INSERT INTO author (name_author, birth_year, country) VALUES 
+    ('Достоевский Ф.М.', 1821, 'Россия'),
+    ('Есенин С.А.', 1895, 'Россия'),
+    ('Пастернак Б.Л.', 1890, 'Россия');
+
+-- Вставка с SELECT
+INSERT INTO book_archive (book_id, title, author_id, price, amount, deleted_at)
+SELECT book_id, title, author_id, price, amount, NOW()
+FROM book
+WHERE amount = 0;
+
+-- INSERT IGNORE (MySQL) — игнорировать ошибки дубликатов
+INSERT IGNORE INTO author (author_id, name_author) VALUES (1, 'Толстой Л.Н.');
+
+-- INSERT ... ON DUPLICATE KEY UPDATE (MySQL)
+INSERT INTO author (author_id, name_author) VALUES (1, 'Толстой Л.Н.')
+ON DUPLICATE KEY UPDATE name_author = VALUES(name_author);
+
+-- UPSERT (PostgreSQL)
+INSERT INTO author (author_id, name_author) VALUES (1, 'Толстой Л.Н.')
+ON CONFLICT (author_id) DO UPDATE 
+SET name_author = EXCLUDED.name_author;
+
+-- INSERT ... RETURNING (PostgreSQL, SQLite)
+INSERT INTO author (name_author) VALUES ('Чехов А.П.')
+RETURNING author_id, name_author;
+```
+
+### UPDATE — обновление записей
+```sql
+-- Обновление всех записей
+UPDATE book SET price = price * 1.1;
+
+-- Обновление с условием
+UPDATE book 
+SET price = price * 0.9 
+WHERE amount < 5 AND author_id = 1;
+
+-- Обновление с JOIN (MySQL)
+UPDATE book b
+JOIN author a ON b.author_id = a.author_id
+SET b.price = b.price * 1.2
+WHERE a.name_author = 'Булгаков М.А.';
+
+-- Обновление с FROM (PostgreSQL, SQL Server)
+UPDATE book
+SET price = price * 1.1
+FROM author
+WHERE book.author_id = author.author_id
+AND author.name_author = 'Булгаков М.А.';
+
+-- UPDATE с подзапросом
+UPDATE book
+SET price = (
+    SELECT AVG(price) * 1.2
+    FROM book b2
+    WHERE b2.author_id = book.author_id
+)
+WHERE amount > 0;
+
+-- UPDATE ... RETURNING (PostgreSQL)
+UPDATE book
+SET amount = amount + 10
+WHERE book_id = 1
+RETURNING book_id, title, amount;
+```
+
+### DELETE — удаление записей
+```sql
+-- Удаление всех записей (медленно, с логированием)
+DELETE FROM book;
+
+-- Быстрая очистка таблицы (без логирования)
+TRUNCATE TABLE book;
+
+-- Удаление с условием
+DELETE FROM book WHERE amount = 0 AND price < 100;
+
+-- DELETE с JOIN (MySQL)
+DELETE b
+FROM book b
+JOIN author a ON b.author_id = a.author_id
+WHERE a.name_author = 'Булгаков М.А.'
+AND b.price < 100;
+
+-- DELETE с USING (PostgreSQL)
+DELETE FROM book
+USING author
+WHERE book.author_id = author.author_id
+AND author.name_author = 'Булгаков М.А.';
+
+-- DELETE ... RETURNING (PostgreSQL)
+DELETE FROM book
+WHERE amount = 0
+RETURNING book_id, title;
+```
+
+### REPLACE — замена записей (MySQL)
+```sql
+-- REPLACE = DELETE + INSERT (если запись существует)
+REPLACE INTO author (author_id, name_author)
+VALUES (1, 'Толстой Л.Н.');
+```
+
+---
+
+## 🎯 ОПЕРАТОРЫ МНОЖЕСТВ
+
+```sql
+-- UNION — объединение без дубликатов
+SELECT title FROM book_2023
+UNION
+SELECT title FROM book_2024;
+
+-- UNION ALL — объединение с дубликатами (быстрее)
+SELECT author FROM book_2023
+UNION ALL
+SELECT author FROM book_2024;
+
+-- INTERSECT — пересечение (только в обеих)
+SELECT author_id FROM book
+INTERSECT
+SELECT author_id FROM book_archive;
+
+-- EXCEPT / MINUS — разность (в первой, но не во второй)
+SELECT author_id FROM book
+EXCEPT
+SELECT author_id FROM book_archive;
+```
+
+---
+
+## 💎 ПОДЗАПРОСЫ
+
+### Скалярный подзапрос (возвращает одно значение)
+```sql
+SELECT 
+    title,
+    price,
+    (SELECT AVG(price) FROM book) AS avg_price,
+    price - (SELECT AVG(price) FROM book) AS diff_from_avg
+FROM book;
+```
+
+### Подзапрос в WHERE
+```sql
+-- Сравнение с одним значением
+SELECT title, price
+FROM book
+WHERE price > (SELECT AVG(price) FROM book);
+
+-- IN
+SELECT title, author_id
+FROM book
+WHERE author_id IN (
+    SELECT author_id
+    FROM author
+    WHERE birth_year > 1850
+);
+
+-- EXISTS
+SELECT name_author
+FROM author a
+WHERE EXISTS (
+    SELECT 1
+    FROM book b
+    WHERE b.author_id = a.author_id
+    AND b.price > 500
+);
+
+-- ANY / SOME
+SELECT title, price
+FROM book
+WHERE price > ANY (
+    SELECT price
+    FROM book
+    WHERE author_id = 1
+);
+
+-- ALL
+SELECT title, price
+FROM book
+WHERE price > ALL (
+    SELECT price
+    FROM book
+    WHERE author_id = 1
+);
+```
+
+### Подзапрос в FROM
+```sql
+SELECT 
+    author_name,
+    book_count,
+    total_revenue
+FROM (
+    SELECT 
+        a.name_author AS author_name,
+        COUNT(b.book_id) AS book_count,
+        SUM(b.price * b.amount) AS total_revenue
+    FROM author a
+    LEFT JOIN book b ON a.author_id = b.author_id
+    GROUP BY a.author_id
+) AS author_stats
+WHERE book_count > 1;
+```
+
+### Подзапрос в SELECT
+```sql
+SELECT 
+    title,
+    price,
+    (SELECT name_author FROM author WHERE author_id = b.author_id) AS author_name,
+    (SELECT COUNT(*) FROM book WHERE author_id = b.author_id) AS author_total_books
+FROM book b;
+```
+
+### Кореллированные подзапросы
+```sql
+-- Найти книги дороже среднего по автору
+SELECT 
+    b1.title,
+    b1.author_id,
+    b1.price
+FROM book b1
+WHERE b1.price > (
+    SELECT AVG(b2.price)
+    FROM book b2
+    WHERE b2.author_id = b1.author_id
+);
+```
+
+---
+
+## 🔄 CTE (Common Table Expressions)
+
+### WITH — временные таблицы запроса
+```sql
+WITH author_stats AS (
+    SELECT 
+        author_id,
+        COUNT(*) AS book_count,
+        AVG(price) AS avg_price
+    FROM book
+    GROUP BY author_id
+)
+SELECT 
+    a.name_author,
+    s.book_count,
+    s.avg_price
+FROM author a
+JOIN author_stats s ON a.author_id = s.author_id
+WHERE s.book_count >= 2;
+
+-- Несколько CTE
+WITH 
+book_stats AS (
+    SELECT author_id, COUNT(*) AS cnt, AVG(price) AS avg_p
+    FROM book GROUP BY author_id
+),
+author_births AS (
+    SELECT author_id, name_author, birth_year
+    FROM author WHERE birth_year IS NOT NULL
+)
+SELECT 
+    ab.name_author,
+    ab.birth_year,
+    bs.cnt,
+    bs.avg_p
+FROM author_births ab
+JOIN book_stats bs ON ab.author_id = bs.author_id
+ORDER BY ab.birth_year;
+```
+
+### Рекурсивные CTE
+```sql
+-- Генерация чисел
+WITH RECURSIVE numbers AS (
+    SELECT 1 AS n
+    UNION ALL
+    SELECT n + 1 FROM numbers WHERE n < 10
+)
+SELECT * FROM numbers;
+
+-- Генерация дат
+WITH RECURSIVE dates AS (
+    SELECT '2024-01-01' AS date
+    UNION ALL
+    SELECT DATE_ADD(date, INTERVAL 1 DAY)
+    FROM dates
+    WHERE date < '2024-01-31'
+)
+SELECT * FROM dates;
+
+-- Иерархия сотрудников
+WITH RECURSIVE org_tree AS (
+    SELECT id, name, manager_id, 1 AS level
+    FROM employees
+    WHERE manager_id IS NULL
+    
+    UNION ALL
+    
+    SELECT 
+        e.id, 
+        e.name, 
+        e.manager_id, 
+        ot.level + 1
+    FROM employees e
+    JOIN org_tree ot ON e.manager_id = ot.id
+)
+SELECT * FROM org_tree;
+
+-- Путь в иерархии
+WITH RECURSIVE emp_path AS (
+    SELECT id, name, manager_id, name AS path
+    FROM employees
+    WHERE manager_id IS NULL
+    
+    UNION ALL
+    
+    SELECT 
+        e.id, 
+        e.name, 
+        e.manager_id, 
+        CONCAT(ep.path, ' → ', e.name)
+    FROM employees e
+    JOIN emp_path ep ON e.manager_id = ep.id
+)
+SELECT * FROM emp_path;
+
+-- MATERIALIZED / NOT MATERIALIZED (PostgreSQL)
+WITH t AS MATERIALIZED (
+    SELECT * FROM big_table WHERE condition
+)
+SELECT * FROM t JOIN another_table ON t.id = another_table.t_id;
+```
+
+---
+
+## 📊 МЕТРИКИ И АНАЛИТИКА
+
+### Основные метрики
+```sql
+-- ARPU (Average Revenue Per User)
+SELECT 
+    DATE(date) AS day,
+    SUM(revenue) / COUNT(DISTINCT user_id) AS ARPU
+FROM payments
+GROUP BY DATE(date);
+
+-- ARPPU (Average Revenue Per Paying User)
+SELECT 
+    DATE(date) AS day,
+    SUM(revenue) / COUNT(DISTINCT user_id) AS ARPPU
+FROM payments
+WHERE revenue > 0
+GROUP BY DATE(date);
+
+-- AOV (Average Order Value)
+SELECT 
+    DATE(order_date) AS day,
+    SUM(amount) / COUNT(*) AS AOV
+FROM orders
+GROUP BY DATE(order_date);
+
+-- Retention Rate (удержание)
+WITH user_activity AS (
+    SELECT 
+        user_id,
+        DATE(created_at) AS activity_date,
+        MIN(DATE(created_at)) OVER(PARTITION BY user_id) AS first_date
+    FROM user_logs
+    WHERE action = 'login'
+)
+SELECT 
+    first_date AS cohort,
+    DATEDIFF(activity_date, first_date) AS day_diff,
+    COUNT(DISTINCT user_id) AS users
+FROM user_activity
+GROUP BY first_date, day_diff
+ORDER BY first_date, day_diff;
+```
+
+---
+
+## 🛠️ РАЗНЫЕ ПОЛЕЗНЫЕ ФУНКЦИИ
+
+### Преобразование типов
+```sql
+-- CAST
+CAST('123' AS INT)                 -- 123
+CAST(123.45 AS DECIMAL(10,2))      -- 123.45
+CAST('2024-01-15' AS DATE)        -- 2024-01-15
+
+-- CONVERT (MySQL, SQL Server)
+CONVERT('123', SIGNED)            -- 123
+CONVERT('2024-01-15', DATE)       -- 2024-01-15
+CONVERT(price, DECIMAL(10,2))     
+
+-- Таблица приоритетов типов (высший → низший)
+-- datetime, smalldatetime, float, real, decimal, money, 
+-- smallmoney, int, smallint, tinyint, bit, nvarchar, nchar, varchar, char
+```
+
+### Работа с массивами (PostgreSQL)
+```sql
+-- Создание массива
+SELECT ARRAY[1, 2, 3];
+SELECT ARRAY_AGG(id) FROM users;
+
+-- Длина массива
+SELECT ARRAY_LENGTH(ARRAY[1, 2, 3], 1);  -- 3
+
+-- Развернуть массив в строки
+SELECT UNNEST(ARRAY['a', 'b', 'c']);
+
+-- Проверка вхождения
+SELECT 1 = ANY(ARRAY[1, 2, 3]);        -- true
+SELECT 1 = ALL(ARRAY[1, 1, 1]);        -- true
+
+-- Конкатенация массивов
+SELECT ARRAY[1,2] || ARRAY[3,4];       -- {1,2,3,4}
+```
+
+### Работа с JSON (MySQL, PostgreSQL)
+```sql
+-- MySQL
+SELECT JSON_OBJECT('id', 1, 'name', 'Булгаков');
+SELECT JSON_ARRAY(1, 2, 3);
+SELECT JSON_EXTRACT('{"a": 1, "b": 2}', '$.a');
+SELECT JSON_UNQUOTE(JSON_EXTRACT(json_col, '$.name'));
+
+-- PostgreSQL
+SELECT JSONB_BUILD_OBJECT('id', 1, 'name', 'Булгаков');
+SELECT TO_JSONB(users) FROM users;
+SELECT jsonb_col->'name' FROM table;
+SELECT jsonb_col->>'name' FROM table;  -- как текст
+```
+
+### Информационные запросы
+```sql
+-- Список таблиц
+SHOW TABLES;                                      -- MySQL
+SELECT table_name FROM information_schema.tables; -- Стандарт
+\dt                                              -- PostgreSQL
+
+-- Структура таблицы
+DESCRIBE book;                                    -- MySQL
+DESC book;
+SHOW COLUMNS FROM book;
+SELECT column_name, data_type FROM information_schema.columns 
+WHERE table_name = 'book';
+
+-- Индексы
+SHOW INDEX FROM book;                            -- MySQL
+SELECT * FROM pg_indexes WHERE tablename = 'book'; -- PostgreSQL
+
+-- Создание базы данных
+CREATE DATABASE habits_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- Удаление базы данных
+DROP DATABASE IF EXISTS habits_db;
+
+-- Переключение базы данных
+USE habits_db;                                    -- MySQL
+\c habits_db;                                   -- PostgreSQL
+```
+
+---
+
+## 🚨 ТИПИЧНЫЕ ОШИБКИ И ИХ РЕШЕНИЯ
+
+### 1. Лишняя запятая перед FROM
+```sql
+-- ❌ НЕПРАВИЛЬНО
+SELECT title, author, price, amount,
+FROM book;
+
+-- ✅ ПРАВИЛЬНО
+SELECT title, author, price, amount
+FROM book;
+```
+
+### 2. WHERE после HAVING
+```sql
+-- ❌ НЕПРАВИЛЬНО
+GROUP BY author
+HAVING SUM(price) > 1000
+WHERE amount > 5;
+
+-- ✅ ПРАВИЛЬНО
+WHERE amount > 5
+GROUP BY author
+HAVING SUM(price) > 1000;
+```
+
+### 3. Два одинаковых алиаса
+```sql
+-- ❌ НЕПРАВИЛЬНО (второй перезапишет первый)
+SELECT 
+    IF(author = 'Булгаков', price*1.1, price) AS new_price,
+    IF(author = 'Есенин', price*1.05, price) AS new_price
+FROM book;
+
+-- ✅ ПРАВИЛЬНО (один алиас с вложенным IF)
+SELECT 
+    IF(author = 'Булгаков', price*1.1,
+        IF(author = 'Есенин', price*1.05, price)
+    ) AS new_price
+FROM book;
+
+-- ✅ ПРАВИЛЬНО (CASE)
+SELECT 
+    CASE author
+        WHEN 'Булгаков' THEN price * 1.1
+        WHEN 'Есенин' THEN price * 1.05
+        ELSE price
+    END AS new_price
+FROM book;
+```
+
+### 4. NULL в арифметических операциях
+```sql
+-- ❌ НЕПРАВИЛЬНО (NULL + число = NULL)
+SELECT price * amount FROM book;  -- если amount = NULL, результат NULL
+
+-- ✅ ПРАВИЛЬНО
+SELECT price * IFNULL(amount, 0) FROM book;
+SELECT price * COALESCE(amount, 0) FROM book;
+```
+
+### 5. Пустая строка в LIKE '% %'
+```sql
+-- ' ' LIKE '% %' → TRUE (строка из пробела проходит)
+-- ''  LIKE '% %' → FALSE (пустая строка не проходит)
+
+-- Для проверки "минимум 2 слова" лучше:
+title LIKE '_% _%'  -- минимум 1 символ до и после пробела
+```
+
+### 6. Неправильный формат инициалов
+```sql
+-- Поиск авторов с форматом "Фамилия И.О."
+author LIKE '% _._.'                    -- правильный формат
+author LIKE '% С._.' OR author LIKE '% _.С.'  -- буква С в инициалах
+```
+
+---
+
+## 🎓 ПРИМЕРЫ КОМПЛЕКСНЫХ ЗАПРОСОВ
+
+### Пример 1: Отчет по продажам с ранжированием
+```sql
+WITH sales_stats AS (
+    SELECT 
+        a.name_author,
+        COUNT(b.book_id) AS books_published,
+        SUM(b.amount) AS total_copies_sold,
+        SUM(b.price * b.amount) AS total_revenue,
+        AVG(b.price) AS avg_price,
+        AVG(b.amount) AS avg_copies_per_book
+    FROM author a
+    LEFT JOIN book b ON a.author_id = b.author_id
+    GROUP BY a.author_id, a.name_author
+)
+SELECT 
+    name_author,
+    books_published,
+    total_copies_sold,
+    ROUND(total_revenue, 2) AS total_revenue,
+    ROUND(avg_price, 2) AS avg_price,
+    ROUND(avg_copies_per_book, 1) AS avg_copies,
+    RANK() OVER(ORDER BY total_revenue DESC) AS revenue_rank,
+    RANK() OVER(ORDER BY total_copies_sold DESC) AS popularity_rank,
+    CASE 
+        WHEN total_revenue > 10000 THEN 'Топ'
+        WHEN total_revenue > 5000 THEN 'Средний'
+        ELSE 'Низкий'
+    END AS revenue_category
+FROM sales_stats
+WHERE books_published > 0
+ORDER BY total_revenue DESC;
+```
+
+### Пример 2: Поиск книг по сложному критерию
+```sql
+-- Название из двух и более слов, 
+-- автор с инициалами в формате "Фамилия И.О.",
+-- буква 'С' в первом или втором инициале
+SELECT 
+    title,
+    author,
+    price,
+    CASE 
+        WHEN author LIKE '% С._.' THEN price * 1.1
+        WHEN author LIKE '% _.С.' THEN price * 1.05
+        ELSE price
+    END AS new_price
+FROM book
+WHERE title LIKE '_% _%'                    -- минимум 2 слова
+  AND author LIKE '% _._.'                 -- формат "Фамилия И.О."
+  AND (author LIKE '% С._.' OR author LIKE '% _.С.')  -- буква С в инициалах
+ORDER BY title;
+```
+
+### Пример 3: Анализ динамики продаж
+```sql
+WITH daily_sales AS (
+    SELECT 
+        DATE(order_date) AS sale_date,
+        COUNT(DISTINCT order_id) AS orders_count,
+        COUNT(DISTINCT customer_id) AS customers_count,
+        SUM(order_amount) AS revenue,
+        SUM(SUM(order_amount)) OVER(ORDER BY DATE(order_date)) AS cumulative_revenue,
+        AVG(SUM(order_amount)) OVER(ORDER BY DATE(order_date) ROWS BETWEEN 6 PRECEDING AND CURRENT ROW) AS revenue_ma_7d
+    FROM orders
+    WHERE order_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
+    GROUP BY DATE(order_date)
+)
+SELECT 
+    sale_date,
+    orders_count,
+    customers_count,
+    ROUND(revenue, 2) AS revenue,
+    ROUND(cumulative_revenue, 2) AS cumulative_revenue,
+    ROUND(revenue_ma_7d, 2) AS revenue_ma_7d,
+    ROUND(revenue / NULLIF(customers_count, 0), 2) AS arpu,
+    ROUND(revenue / NULLIF(orders_count, 0), 2) AS aov
+FROM daily_sales
+ORDER BY sale_date;
+```
+
+### Пример 4: Обновление с присвоением порядковых номеров
+```sql
+UPDATE applicant_order 
+JOIN (
+    SELECT 
+        ROW_NUMBER() OVER (PARTITION BY program_id ORDER BY itog DESC) AS str_num,
+        program_id, 
+        enrollee_id, 
+        itog
+    FROM applicant_order
+) AS t2 USING (program_id, enrollee_id)
+SET applicant_order.str_id = t2.str_num;
+
+SELECT * FROM applicant_order;
+```
+
+---
+
+## 📚 СОКРАЩЕНИЯ И ТЕРМИНЫ
+
+| Термин | Расшифровка | Описание |
+|--------|------------|----------|
+| **DDL** | Data Definition Language | Язык определения данных (CREATE, ALTER, DROP) |
+| **DML** | Data Manipulation Language | Язык манипуляции данными (SELECT, INSERT, UPDATE, DELETE) |
+| **DCL** | Data Control Language | Язык управления доступом (GRANT, REVOKE) |
+| **TCL** | Transaction Control Language | Язык управления транзакциями (COMMIT, ROLLBACK) |
+| **CTE** | Common Table Expression | Общее табличное выражение (WITH) |
+| **PK** | Primary Key | Первичный ключ |
+| **FK** | Foreign Key | Внешний ключ |
+| **ACID** | Atomicity, Consistency, Isolation, Durability | Требования к транзакционной системе |
+| **CRUD** | Create, Read, Update, Delete | Четыре базовые функции работы с данными |
+| **OLTP** | Online Transaction Processing | Операционная обработка транзакций |
+| **OLAP** | Online Analytical Processing | Аналитическая обработка данных |
+| **ERD** | Entity-Relationship Diagram | Диаграмма "сущность-связь" |
+
+---
+
+*Эта шпаргалка содержит 99% того, что реально используется в работе с SQL. Сохраняй и пользуйся!* 🚀
 Часть 1 не осмысленная) дополнял на ранних этапах
 
 !!!!SQL выполняет команды не так!!! Это порядок записи кода:
