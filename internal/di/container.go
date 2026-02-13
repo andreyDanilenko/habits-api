@@ -2,15 +2,21 @@ package di
 
 import (
 	"backend/internal/config"
+	adminHandler "backend/internal/handler/admin"
 	authHandler "backend/internal/handler/auth"
 	habitsHandler "backend/internal/handler/habits"
 	journalHandler "backend/internal/handler/journal"
 	loggerHandler "backend/internal/handler/logger"
+	masterHandler "backend/internal/handler/master"
+	notesHandler "backend/internal/handler/notes"
 	workspaceHandler "backend/internal/handler/workspace"
 	"backend/internal/middleware"
 	habitsRepo "backend/internal/repository/habits"
 	journalRepo "backend/internal/repository/journal"
+	licenseRepo "backend/internal/repository/license"
 	loggerRepo "backend/internal/repository/logger"
+	masterRepo "backend/internal/repository/master"
+	notesRepo "backend/internal/repository/notes"
 	userRepo "backend/internal/repository/user"
 	userPrefsRepo "backend/internal/repository/user_preferences"
 	workspaceRepo "backend/internal/repository/workspace"
@@ -19,6 +25,8 @@ import (
 	habitsService "backend/internal/service/habits"
 	journalService "backend/internal/service/journal"
 	loggerService "backend/internal/service/logger"
+	masterService "backend/internal/service/master"
+	notesService "backend/internal/service/notes"
 	workspaceService "backend/internal/service/workspace"
 	"backend/pkg/auth/token"
 	"backend/pkg/http/cookies"
@@ -33,8 +41,11 @@ import (
 type Container struct {
 	Router           *router.Router
 	AuthHandler      *authHandler.Handler
+	AdminHandler     *adminHandler.Handler
 	WorkspaceHandler *workspaceHandler.Handler
 	WorkspaceService *workspaceService.Service
+	MasterHandler    *masterHandler.Handler
+	NotesHandler     *notesHandler.Handler
 	HabitsHandler    *habitsHandler.Handler
 	JournalHandler   *journalHandler.Handler
 	LoggerHandler    *loggerHandler.Handler
@@ -55,7 +66,8 @@ func NewContainer(db *sql.DB, cfg *config.Config) *Container {
 
 	workspaceRepository := workspaceRepo.NewRepository(db)
 	userPrefsRepository := userPrefsRepo.NewRepository(db)
-	workspaceSvc := workspaceService.NewService(workspaceRepository, userPrefsRepository)
+	licenseRepository := licenseRepo.NewRepository(db)
+	workspaceSvc := workspaceService.NewService(workspaceRepository, userPrefsRepository, licenseRepository)
 
 	// Auth
 	userRepository := userRepo.NewRepository(db)
@@ -67,6 +79,16 @@ func NewContainer(db *sql.DB, cfg *config.Config) *Container {
 
 	// Workspace handler
 	workspaceHdlr := workspaceHandler.NewHandler(workspaceSvc, responder, validate)
+
+	// Master data (Shared Schema: currencies, counterparties)
+	masterRepository := masterRepo.NewRepository(db)
+	masterSvc := masterService.NewService(masterRepository)
+	masterHdlr := masterHandler.NewHandler(masterSvc, workspaceSvc, responder, validate)
+
+	// Notes module
+	notesRepository := notesRepo.NewRepository(db)
+	notesSvc := notesService.NewService(notesRepository)
+	notesHdlr := notesHandler.NewHandler(notesSvc, workspaceSvc, responder, validate)
 
 	// Habits
 	habitsRepository := habitsRepo.NewRepository(db)
@@ -81,11 +103,17 @@ func NewContainer(db *sql.DB, cfg *config.Config) *Container {
 	// Logger
 	loggerHdlr := loggerHandler.NewHandler(logService, responder, validate)
 
+	// Admin (использует workspace service и user repo)
+	adminHdlr := adminHandler.NewHandler(workspaceSvc, userRepository, responder)
+
 	return &Container{
 		Router:           r,
 		AuthHandler:      authHdlr,
+		AdminHandler:     adminHdlr,
 		WorkspaceHandler: workspaceHdlr,
 		WorkspaceService: workspaceSvc,
+		MasterHandler:    masterHdlr,
+		NotesHandler:     notesHdlr,
 		HabitsHandler:    habitsHdlr,
 		JournalHandler:   journalHdlr,
 		LoggerHandler:    loggerHdlr,
@@ -117,9 +145,16 @@ func (c *Container) RegisterRoutes(r *router.Router) {
 	protectedAuthGroup := protected.Group("/auth")
 	c.AuthHandler.RegisterProtectedRoutes(protectedAuthGroup)
 
-	// Workspace routes
-	workspaceGroup := protected.Group("/workspaces")
-	c.WorkspaceHandler.RegisterRoutes(workspaceGroup)
+		// Workspace routes (and nested: master data, notes)
+		workspaceGroup := protected.Group("/workspaces")
+		c.WorkspaceHandler.RegisterRoutes(workspaceGroup)
+		wsIDGroup := workspaceGroup.Group("/:id")
+		c.MasterHandler.RegisterRoutes(wsIDGroup)
+		c.NotesHandler.RegisterRoutes(wsIDGroup)
+
+		adminGroup := protected.Group("/admin")
+	adminGroup.Use(middleware.RequireAdmin(c.Responder))
+	c.AdminHandler.RegisterRoutes(adminGroup)
 
 	// Habits routes
 	habitsGroup := protected.Group("/habits")
