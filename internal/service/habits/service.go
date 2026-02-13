@@ -24,19 +24,15 @@ func NewService(repo *habits.Repository) *Service {
 	return &Service{repo: repo}
 }
 
-func (s *Service) List(ctx context.Context, userID, workspaceID string, targetDate *time.Time) ([]model.Habit, error) {
+func (s *Service) List(ctx context.Context, workspaceID string, targetDate *time.Time) ([]model.Habit, error) {
 	if workspaceID == "" {
 		return nil, ErrWorkspaceNeeded
-	}
-	uid, err := uuid.Parse(userID)
-	if err != nil {
-		return nil, err
 	}
 	wid, err := uuid.Parse(workspaceID)
 	if err != nil {
 		return nil, err
 	}
-	return s.repo.List(ctx, uid, wid, targetDate)
+	return s.repo.List(ctx, wid, targetDate)
 }
 
 func (s *Service) Create(ctx context.Context, dto model.CreateHabitDto, userID, workspaceID string) (*model.Habit, error) {

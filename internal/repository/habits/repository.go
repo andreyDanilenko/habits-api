@@ -29,6 +29,72 @@ func normalizeDate(t time.Time) time.Time {
 	return time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
 }
 
+// createHabitVersion создает запись в таблице habit_versions для исторического календаря.
+// Дата действия версии передается отдельно, чтобы можно было отличать дату создания записи от даты вступления версии в силу.
+func (r *Repository) createHabitVersion(
+	ctx context.Context,
+	habitID string,
+	userID string,
+	workspaceID string,
+	title string,
+	description string,
+	color string,
+	icon string,
+	targetDays int,
+	dailyGoal int,
+	preferredTime string,
+	category string,
+	scheduleType string,
+	recurringDays []int,
+	oneTimeDate string,
+	isActive bool,
+	validFrom time.Time,
+) error {
+	var recurringDaysValue interface{}
+	if len(recurringDays) > 0 {
+		recurringDaysValue = pq.Array(recurringDays)
+	} else {
+		recurringDaysValue = nil
+	}
+
+	var oneTimeDateValue interface{}
+	if oneTimeDate != "" {
+		parsedDate, err := time.Parse("2006-01-02", oneTimeDate)
+		if err == nil {
+			oneTimeDateValue = normalizeDate(parsedDate)
+		}
+	}
+
+	var preferredTimeValue interface{}
+	if preferredTime != "" && preferredTime != "any" {
+		preferredTimeValue = convertPreferredTimeToTime(preferredTime)
+	} else {
+		preferredTimeValue = nil
+	}
+
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO habit_versions (
+			habit_id, user_id, workspace_id,
+			title, description, color, icon,
+			target_days, daily_goal, preferred_time, category,
+			schedule_type, recurring_days, one_time_date, is_active,
+			valid_from
+		) VALUES (
+			$1, $2, $3,
+			$4, $5, $6, $7,
+			$8, $9, $10, $11,
+			$12, $13, $14, $15,
+			$16
+		)
+	`, habitID, userID, workspaceID,
+		title, description, color, icon,
+		targetDays, dailyGoal, preferredTimeValue, category,
+		scheduleType, recurringDaysValue, oneTimeDateValue, isActive,
+		normalizeDate(validFrom),
+	)
+	return err
+}
+
 // convertPreferredTimeToTime конвертирует строковое значение preferredTime в формат времени для PostgreSQL
 // "morning" -> "08:00:00", "afternoon" -> "14:00:00", "evening" -> "20:00:00"
 // Если значение уже в формате времени (HH:MM:SS), возвращает его как есть
@@ -64,13 +130,12 @@ func convertTimeToPreferredTime(timeStr string) string {
 	}
 }
 
-func (r *Repository) List(ctx context.Context, userID, workspaceID uuid.UUID, targetDate *time.Time) ([]model.Habit, error) {
-	// Если указана дата, используем GetHabitsForDate
+// List возвращает все привычки воркспейса (видят все участники, в т.ч. админ в чужом воркспейсе).
+func (r *Repository) List(ctx context.Context, workspaceID uuid.UUID, targetDate *time.Time) ([]model.Habit, error) {
 	if targetDate != nil {
-		return r.GetHabitsForDate(ctx, userID, workspaceID, *targetDate)
+		return r.GetHabitsForDate(ctx, workspaceID, *targetDate)
 	}
 
-	// Иначе возвращаем все привычки
 	query := `
 		SELECT 
 			id, title, description, color, icon, 
@@ -79,11 +144,11 @@ func (r *Repository) List(ctx context.Context, userID, workspaceID uuid.UUID, ta
 			user_id, workspace_id, 
 			created_at, updated_at
 		FROM habits 
-		WHERE user_id = $1 AND workspace_id = $2
+		WHERE workspace_id = $1
 		ORDER BY preferred_time NULLS LAST, created_at DESC
 	`
 
-	rows, err := r.db.QueryContext(ctx, query, userID, workspaceID)
+	rows, err := r.db.QueryContext(ctx, query, workspaceID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query habits: %w", err)
 	}
@@ -92,44 +157,85 @@ func (r *Repository) List(ctx context.Context, userID, workspaceID uuid.UUID, ta
 	return r.scanHabits(rows)
 }
 
-// GetHabitsForDate возвращает привычки, активные на указанную дату
-// Важно: привычка не должна влиять на прошлые дни - она активна только с даты создания
-func (r *Repository) GetHabitsForDate(ctx context.Context, userID, workspaceID uuid.UUID, targetDate time.Time) ([]model.Habit, error) {
+// GetHabitsForDate возвращает все привычки воркспейса, активные на указанную дату.
+func (r *Repository) GetHabitsForDate(ctx context.Context, workspaceID uuid.UUID, targetDate time.Time) ([]model.Habit, error) {
 	normalizedDate := normalizeDate(targetDate)
-	// Используем EXTRACT(DOW FROM date) в SQL для получения дня недели
-	// PostgreSQL: 0=воскресенье, 1=понедельник, ..., 6=суббота
 
 	query := `
 		SELECT 
-			id, title, description, color, icon, 
-			target_days, daily_goal, preferred_time, category,
-			schedule_type, recurring_days, one_time_date, is_active,
-			user_id, workspace_id, 
-			created_at, updated_at
-		FROM habits 
-		WHERE user_id = $1 
-			AND workspace_id = $2
+			habit_id AS id,
+			title,
+			description,
+			color,
+			icon,
+			target_days,
+			daily_goal,
+			preferred_time,
+			category,
+			schedule_type,
+			recurring_days,
+			one_time_date,
+			is_active,
+			user_id,
+			workspace_id,
+			(valid_from)::timestamp AS created_at,
+			COALESCE(valid_to, valid_from)::timestamp AS updated_at
+		FROM habit_versions
+		WHERE workspace_id = $1
 			AND is_active = true
-			-- Важно: привычка не должна влиять на прошлые дни - только с даты создания
-			AND DATE(created_at) <= $3::date
+			AND $2::date BETWEEN valid_from AND COALESCE(valid_to, $2::date)
 			AND (
-				-- Регулярные привычки: проверяем день недели в массиве recurring_days
-				-- Используем EXTRACT(DOW FROM date) для получения дня недели (0=воскресенье, 6=суббота)
-				(schedule_type = 'recurring' AND EXTRACT(DOW FROM $3::date) = ANY(recurring_days))
+				(schedule_type = 'recurring' AND EXTRACT(DOW FROM $2::date) = ANY(recurring_days))
 				OR
-				-- Разовые привычки: проверяем совпадение даты
-				(schedule_type = 'one_time' AND one_time_date = $3::date)
+				(schedule_type = 'one_time' AND one_time_date = $2::date)
 			)
-		ORDER BY preferred_time NULLS LAST, created_at DESC
+		ORDER BY preferred_time NULLS LAST, valid_from DESC
 	`
 
-	rows, err := r.db.QueryContext(ctx, query, userID, workspaceID, normalizedDate)
+	rows, err := r.db.QueryContext(ctx, query, workspaceID, normalizedDate)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query habits for date: %w", err)
+		return nil, fmt.Errorf("failed to query habits for date (versions): %w", err)
 	}
 	defer rows.Close()
 
-	return r.scanHabits(rows)
+	habits, err := r.scanHabits(rows)
+	if err != nil {
+		return nil, err
+	}
+
+	// Фолбэк: если по каким-то причинам нет версий (новая БД, проблемы миграций),
+	// используем старую логику напрямую по таблице habits,
+	// чтобы новые привычки сразу отображались в календаре.
+	if len(habits) == 0 {
+		fallbackQuery := `
+			SELECT 
+				id, title, description, color, icon, 
+				target_days, daily_goal, preferred_time, category,
+				schedule_type, recurring_days, one_time_date, is_active,
+				user_id, workspace_id, 
+				created_at, updated_at
+			FROM habits 
+			WHERE workspace_id = $1
+				AND is_active = true
+				AND DATE(created_at) <= $2::date
+				AND (
+					(schedule_type = 'recurring' AND EXTRACT(DOW FROM $2::date) = ANY(recurring_days))
+					OR
+					(schedule_type = 'one_time' AND one_time_date = $2::date)
+				)
+			ORDER BY preferred_time NULLS LAST, created_at DESC
+		`
+
+		fallbackRows, err := r.db.QueryContext(ctx, fallbackQuery, workspaceID, normalizedDate)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query habits for date (fallback): %w", err)
+		}
+		defer fallbackRows.Close()
+
+		return r.scanHabits(fallbackRows)
+	}
+
+	return habits, nil
 }
 
 // scanHabits - вспомогательная функция для сканирования привычек из rows
@@ -340,6 +446,12 @@ func (r *Repository) Create(ctx context.Context, dto model.CreateHabitDto, userI
 		return nil, fmt.Errorf("failed to create habit: %w", err)
 	}
 
+	// Создаем стартовую версию привычки для исторического календаря
+	if err := r.createHabitVersion(ctx, habit.ID, habit.UserID, habit.WorkspaceID, habit.Title, habit.Description, habit.Color, habit.Icon, habit.TargetDays, habit.DailyGoal, habit.PreferredTime, habit.Category, habit.ScheduleType, habit.RecurringDays, habit.OneTimeDate, habit.IsActive, normalizeDate(createdAt)); err != nil {
+		log.Printf("Error creating habit version: %v, habitID: %s", err, habit.ID)
+		// Не считаем ошибку версионирования критичной для основного создания
+	}
+
 	if preferredTimePtr.Valid {
 		habit.PreferredTime = preferredTimePtr.String
 	}
@@ -436,20 +548,26 @@ func (r *Repository) Update(ctx context.Context, id, userID uuid.UUID, dto model
 	args := []interface{}{time.Now().UTC()}
 	argIndex := 2
 
+	// Отслеживаем, меняются ли поля, которые должны попасть в историю версий
+	shouldVersion := false
+
 	if dto.Title != nil {
 		updates = append(updates, fmt.Sprintf("title = $%d", argIndex))
 		args = append(args, *dto.Title)
 		argIndex++
+		shouldVersion = true
 	}
 	if dto.Description != nil {
 		updates = append(updates, fmt.Sprintf("description = $%d", argIndex))
 		args = append(args, *dto.Description)
 		argIndex++
+		shouldVersion = true
 	}
 	if dto.Color != nil {
 		updates = append(updates, fmt.Sprintf("color = $%d", argIndex))
 		args = append(args, *dto.Color)
 		argIndex++
+		shouldVersion = true
 	}
 	if dto.Icon != nil {
 		updates = append(updates, fmt.Sprintf("icon = $%d", argIndex))
@@ -496,6 +614,7 @@ func (r *Repository) Update(ctx context.Context, id, userID uuid.UUID, dto model
 		updates = append(updates, fmt.Sprintf("schedule_type = $%d", argIndex))
 		args = append(args, *dto.ScheduleType)
 		argIndex++
+		shouldVersion = true
 
 		// При смене типа расписания автоматически очищаем неиспользуемые поля
 		if *dto.ScheduleType == "recurring" {
@@ -528,6 +647,7 @@ func (r *Repository) Update(ctx context.Context, id, userID uuid.UUID, dto model
 			updates = append(updates, fmt.Sprintf("recurring_days = $%d", argIndex))
 			args = append(args, pq.Array(*dto.RecurringDays))
 			argIndex++
+			shouldVersion = true
 
 			// Автоматически обновляем target_days на количество выбранных дней
 			// target_days = количество дней в recurring_days
@@ -571,6 +691,7 @@ func (r *Repository) Update(ctx context.Context, id, userID uuid.UUID, dto model
 				args = append(args, oneTimeDateValue)
 				argIndex++
 			}
+			shouldVersion = true
 		}
 	}
 
@@ -578,6 +699,7 @@ func (r *Repository) Update(ctx context.Context, id, userID uuid.UUID, dto model
 		updates = append(updates, fmt.Sprintf("is_active = $%d", argIndex))
 		args = append(args, *dto.IsActive)
 		argIndex++
+		shouldVersion = true
 	}
 
 	if len(updates) == 1 { // только updated_at изменился
@@ -630,6 +752,29 @@ func (r *Repository) Update(ctx context.Context, id, userID uuid.UUID, dto model
 		return nil, fmt.Errorf("failed to update habit: %w", err)
 	}
 
+	// При необходимости создаем новую версию привычки
+	if shouldVersion {
+		changeDate := normalizeDate(time.Now().UTC())
+
+		// Закрываем предыдущую открытую версию
+		_, err = r.db.ExecContext(ctx, `
+			UPDATE habit_versions
+			SET valid_to = $1
+			WHERE habit_id = $2 
+				AND user_id = $3
+				AND workspace_id = $4
+				AND valid_to IS NULL
+		`, changeDate.AddDate(0, 0, -1), habit.ID, habit.UserID, habit.WorkspaceID)
+		if err != nil {
+			log.Printf("Error closing previous habit version: %v, habitID: %s", err, habit.ID)
+		}
+
+		// Создаем новую версию с обновленными полями
+		if err := r.createHabitVersion(ctx, habit.ID, habit.UserID, habit.WorkspaceID, habit.Title, habit.Description, habit.Color, habit.Icon, habit.TargetDays, habit.DailyGoal, habit.PreferredTime, habit.Category, habit.ScheduleType, habit.RecurringDays, habit.OneTimeDate, habit.IsActive, changeDate); err != nil {
+			log.Printf("Error creating new habit version: %v, habitID: %s", err, habit.ID)
+		}
+	}
+
 	if preferredTimePtr.Valid {
 		habit.PreferredTime = preferredTimePtr.String
 	}
@@ -661,13 +806,31 @@ func (r *Repository) Delete(ctx context.Context, id, userID uuid.UUID) error {
 	}
 	defer tx.Rollback()
 
-	// Удаляем связанные completions
-	_, err = tx.ExecContext(ctx,
-		"DELETE FROM habit_completions WHERE habit_id = $1 AND user_id = $2",
+	// Получаем workspace_id для привычки
+	var workspaceID uuid.UUID
+	err = tx.QueryRowContext(ctx,
+		"SELECT workspace_id FROM habits WHERE id = $1 AND user_id = $2",
 		id, userID,
-	)
+	).Scan(&workspaceID)
 	if err != nil {
-		return fmt.Errorf("failed to delete habit completions: %w", err)
+		if err == sql.ErrNoRows {
+			return sql.ErrNoRows
+		}
+		return fmt.Errorf("failed to get habit workspace_id: %w", err)
+	}
+
+	// Закрываем текущую открытую версию привычки
+	deleteDate := normalizeDate(time.Now().UTC())
+	_, err = tx.ExecContext(ctx, `
+		UPDATE habit_versions
+		SET valid_to = $1
+		WHERE habit_id = $2 
+			AND user_id = $3
+			AND workspace_id = $4
+			AND valid_to IS NULL
+	`, deleteDate, id, userID, workspaceID)
+	if err != nil {
+		return fmt.Errorf("failed to close habit version: %w", err)
 	}
 
 	// Удаляем привычку
@@ -694,15 +857,28 @@ func (r *Repository) Delete(ctx context.Context, id, userID uuid.UUID) error {
 func (r *Repository) Complete(ctx context.Context, habitID, userID uuid.UUID, date time.Time, notes string, rating interface{}, completionTime *string) (*model.HabitCompletion, error) {
 	query := `
 		INSERT INTO habit_completions (
-			id, habit_id, user_id, date, notes, rating, time, created_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		RETURNING id, habit_id, user_id, date, notes, rating, time, created_at
+			id, habit_id, user_id, workspace_id, date, notes, rating, time, created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		RETURNING id, habit_id, user_id, workspace_id, date, notes, rating, time, created_at
 	`
 
 	completionID := uuid.New()
 	now := time.Now().UTC()
 	// Нормализуем дату до начала дня для корректного сравнения с полем DATE
 	normalizedDate := normalizeDate(date)
+
+	// Определяем workspace_id по привычке
+	var workspaceID uuid.UUID
+	err := r.db.QueryRowContext(ctx,
+		"SELECT workspace_id FROM habits WHERE id = $1 AND user_id = $2",
+		habitID, userID,
+	).Scan(&workspaceID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("habit not found for completion")
+		}
+		return nil, fmt.Errorf("failed to get workspace_id for completion: %w", err)
+	}
 
 	var completion model.HabitCompletion
 	var completionDate, createdAt time.Time
@@ -725,10 +901,11 @@ func (r *Repository) Complete(ctx context.Context, habitID, userID uuid.UUID, da
 		ratingValue = rating
 	}
 
-	err := r.db.QueryRowContext(ctx, query,
+	err = r.db.QueryRowContext(ctx, query,
 		completionID,
 		habitID,
 		userID,
+		workspaceID,
 		normalizedDate,
 		notes,
 		ratingValue,
@@ -738,6 +915,7 @@ func (r *Repository) Complete(ctx context.Context, habitID, userID uuid.UUID, da
 		&completion.ID,
 		&completion.HabitID,
 		&completion.UserID,
+		&completion.WorkspaceID,
 		&completionDate,
 		&completion.Notes,
 		&ratingPtr,
@@ -1077,7 +1255,7 @@ func (r *Repository) GetStats(ctx context.Context, habitID, userID uuid.UUID) (*
 
 func (r *Repository) GetCompletions(ctx context.Context, habitID, userID uuid.UUID, startDate, endDate time.Time) ([]model.HabitCompletion, error) {
 	query := `
-		SELECT id, habit_id, user_id, date, notes, rating, time, created_at
+		SELECT id, habit_id, user_id, workspace_id, date, notes, rating, time, created_at
 		FROM habit_completions 
 		WHERE habit_id = $1 AND user_id = $2 AND date BETWEEN $3 AND $4
 		ORDER BY date DESC, time DESC
@@ -1104,6 +1282,7 @@ func (r *Repository) GetCompletions(ctx context.Context, habitID, userID uuid.UU
 			&completion.ID,
 			&completion.HabitID,
 			&completion.UserID,
+			&completion.WorkspaceID,
 			&completionDate,
 			&completion.Notes,
 			&ratingPtr,
@@ -1134,11 +1313,10 @@ func (r *Repository) GetCompletions(ctx context.Context, habitID, userID uuid.UU
 
 func (r *Repository) GetAllCompletions(ctx context.Context, userID, workspaceID uuid.UUID, startDate, endDate time.Time) ([]model.HabitCompletion, error) {
 	query := `
-		SELECT hc.id, hc.habit_id, hc.user_id, hc.date, hc.notes, hc.rating, hc.time, hc.created_at
-		FROM habit_completions hc
-		INNER JOIN habits h ON hc.habit_id = h.id
-		WHERE hc.user_id = $1 AND h.workspace_id = $2 AND hc.date BETWEEN $3 AND $4
-		ORDER BY hc.date DESC, hc.time DESC
+		SELECT id, habit_id, user_id, workspace_id, date, notes, rating, time, created_at
+		FROM habit_completions
+		WHERE user_id = $1 AND workspace_id = $2 AND date BETWEEN $3 AND $4
+		ORDER BY date DESC, time DESC
 	`
 
 	// Нормализуем даты до начала дня для корректного сравнения с полем DATE
@@ -1162,6 +1340,7 @@ func (r *Repository) GetAllCompletions(ctx context.Context, userID, workspaceID 
 			&completion.ID,
 			&completion.HabitID,
 			&completion.UserID,
+			&completion.WorkspaceID,
 			&completionDate,
 			&completion.Notes,
 			&ratingPtr,
@@ -1197,10 +1376,9 @@ func (r *Repository) GetCalendar(ctx context.Context, userID, workspaceID uuid.U
 
 	// Получаем completion за период для всех привычек пользователя
 	completionsQuery := `
-		SELECT hc.habit_id, hc.date
-		FROM habit_completions hc
-		INNER JOIN habits h ON hc.habit_id = h.id
-		WHERE hc.user_id = $1 AND h.workspace_id = $2 AND hc.date BETWEEN $3 AND $4
+		SELECT habit_id, date
+		FROM habit_completions
+		WHERE user_id = $1 AND workspace_id = $2 AND date BETWEEN $3 AND $4
 	`
 
 	rows, err := r.db.QueryContext(ctx, completionsQuery, userID, workspaceID, normalizedStart, normalizedEnd)
@@ -1232,8 +1410,8 @@ func (r *Repository) GetCalendar(ctx context.Context, userID, workspaceID uuid.U
 	for !current.After(normalizedEnd) {
 		dateKey := current.Format("2006-01-02")
 
-		// Получаем активные привычки для этого дня
-		dayHabits, err := r.GetHabitsForDate(ctx, userID, workspaceID, current)
+		// Получаем активные привычки воркспейса для этого дня
+		dayHabits, err := r.GetHabitsForDate(ctx, workspaceID, current)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get habits for date %s: %w", dateKey, err)
 		}

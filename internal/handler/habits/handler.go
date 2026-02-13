@@ -58,7 +58,7 @@ func (h *Handler) requireWorkspace(c *gin.Context) (userID, workspaceID string, 
 }
 
 func (h *Handler) List(c *gin.Context) {
-	userID, workspaceID, ok := h.requireWorkspace(c)
+	_, workspaceID, ok := h.requireWorkspace(c)
 	if !ok {
 		return
 	}
@@ -73,7 +73,7 @@ func (h *Handler) List(c *gin.Context) {
 		targetDate = &parsedDate
 	}
 
-	list, err := h.service.List(c.Request.Context(), userID, workspaceID, targetDate)
+	list, err := h.service.List(c.Request.Context(), workspaceID, targetDate)
 	if err != nil {
 		h.responder.InternalServerError(c, "Failed to list habits")
 		return
