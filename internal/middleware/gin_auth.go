@@ -59,7 +59,7 @@ func GinAuthMiddleware(tokenGen *token.Generator, responder *response.Responder)
 		fmt.Println("GinAuthMiddleware: valid token for user:", claims.UserID)
 
 		c.Set(GinUserIDKey, claims.UserID)
-		c.Set(GinRoleKey, model.UserRole(claims.Role))
+		c.Set(GinRoleKey, model.UserRole(strings.ToUpper(claims.Role)))
 
 		c.Next()
 	}

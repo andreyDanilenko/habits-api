@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"backend/internal/model"
 	workspaceService "backend/internal/service/workspace"
 
 	"github.com/gin-gonic/gin"
@@ -11,12 +12,18 @@ import (
 
 // WorkspaceMiddleware подставляет workspace_id в контекст.
 // Источники (по приоритету): query ?workspace_id=, заголовок X-Workspace-ID, user_preferences, первый доступный.
+// Учитывает глобальную роль: ADMIN имеет доступ к любому воркспейсу.
 func WorkspaceMiddleware(svc *workspaceService.Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userID, ok := GetUserIDFromGin(c)
 		if !ok {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 			return
+		}
+		roleVal, _ := c.Get(GinRoleKey)
+		userRole := model.UserRoleUser
+		if roleVal != nil {
+			userRole = roleVal.(model.UserRole)
 		}
 
 		workspaceID := c.Query("workspace_id")
@@ -25,7 +32,7 @@ func WorkspaceMiddleware(svc *workspaceService.Service) gin.HandlerFunc {
 		}
 		if workspaceID == "" {
 			var err error
-			workspaceID, err = svc.GetCurrentWorkspace(c.Request.Context(), userID)
+			workspaceID, err = svc.GetCurrentWorkspace(c.Request.Context(), userID, userRole)
 			if err != nil && !errors.Is(err, workspaceService.ErrNoActiveWorkspace) {
 				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "failed to get current workspace"})
 				return
@@ -33,7 +40,7 @@ func WorkspaceMiddleware(svc *workspaceService.Service) gin.HandlerFunc {
 		}
 
 		if workspaceID != "" {
-			hasAccess, err := svc.HasAccess(c.Request.Context(), workspaceID, userID)
+			hasAccess, err := svc.HasAccess(c.Request.Context(), workspaceID, userID, userRole)
 			if err != nil || !hasAccess {
 				workspaceID = ""
 			}

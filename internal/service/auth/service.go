@@ -49,23 +49,48 @@ func NewService(
 }
 
 func (s *AuthService) Register(ctx context.Context, req model.RegisterRequest) (*LoginResponse, error) {
-	// 1. Проверяем, существует ли пользователь с таким email
+	// 1. Активный пользователь с таким email уже есть — нельзя регистрироваться
 	existing, err := s.userRepo.FindByEmail(ctx, req.Email)
 	if err != nil {
 		return nil, err
 	}
-
 	if existing != nil {
 		return nil, ErrUserExists
 	}
 
-	// 2. Хешируем пароль
+	// 2. Хешируем пароль (нужно и для создания, и для реактивации)
 	hashedPassword, err := password.Hash(req.Password)
 	if err != nil {
 		return nil, err
 	}
 
-	// 3. Создаем пользователя
+	// 3. Удалённый пользователь (soft delete) с таким email — реактивируем вместо создания
+	anyStatus, err := s.userRepo.FindByEmailAnyStatus(ctx, req.Email)
+	if err != nil {
+		return nil, err
+	}
+	if anyStatus != nil && anyStatus.Status != nil && *anyStatus.Status == model.UserStatusDeleted {
+		now := time.Now()
+		anyStatus.Status = userStatusPtr(model.UserStatusActive)
+		anyStatus.Password = hashedPassword
+		anyStatus.Name = &req.Name
+		anyStatus.UpdatedAt = now
+		if err := s.userRepo.Update(ctx, anyStatus); err != nil {
+			return nil, err
+		}
+		anyStatus.Password = ""
+		accessToken, err := s.tokenGen.Generate(anyStatus.ID, string(anyStatus.Role))
+		if err != nil {
+			return nil, err
+		}
+		return &LoginResponse{
+			User:        anyStatus,
+			AccessToken: accessToken,
+			ExpiresIn:   int(s.accessExpiry.Seconds()),
+		}, nil
+	}
+
+	// 4. Создаем нового пользователя
 	now := time.Now()
 	user := &model.User{
 		ID:        uuid.New().String(),
@@ -77,8 +102,6 @@ func (s *AuthService) Register(ctx context.Context, req model.RegisterRequest) (
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
-
-	// 4. Сохраняем в БД
 	if err := s.userRepo.Create(ctx, user); err != nil {
 		return nil, err
 	}
@@ -93,17 +116,13 @@ func (s *AuthService) Register(ctx context.Context, req model.RegisterRequest) (
 		Color: stringPtr("#3B82F6"),
 	}, user.ID)
 	if err != nil {
-		// Логируем ошибку, но не прерываем регистрацию
 		fmt.Printf("Failed to create default workspace for user %s: %v\n", user.ID, err)
 	}
 
-	// 6. Генерируем access token
 	accessToken, err := s.tokenGen.Generate(user.ID, string(user.Role))
 	if err != nil {
 		return nil, err
 	}
-
-	// 7. Очищаем пароль перед возвратом
 	user.Password = ""
 	return &LoginResponse{
 		User:        user,
