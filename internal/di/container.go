@@ -145,20 +145,20 @@ func (c *Container) RegisterRoutes(r *router.Router) {
 	protectedAuthGroup := protected.Group("/auth")
 	c.AuthHandler.RegisterProtectedRoutes(protectedAuthGroup)
 
-		// Workspace routes (and nested: master data, notes)
-		workspaceGroup := protected.Group("/workspaces")
-		c.WorkspaceHandler.RegisterRoutes(workspaceGroup)
-		wsIDGroup := workspaceGroup.Group("/:id")
-		c.MasterHandler.RegisterRoutes(wsIDGroup)
-		c.NotesHandler.RegisterRoutes(wsIDGroup)
-
-		adminGroup := protected.Group("/admin")
-	adminGroup.Use(middleware.RequireAdmin(c.Responder))
-	c.AdminHandler.RegisterRoutes(adminGroup)
+	// Workspace routes (and nested: master data, notes)
+	workspaceGroup := protected.Group("/workspaces")
+	c.WorkspaceHandler.RegisterRoutes(workspaceGroup)
+	wsIDGroup := workspaceGroup.Group("/:id")
+	c.MasterHandler.RegisterRoutes(wsIDGroup)
+	c.NotesHandler.RegisterRoutes(wsIDGroup)
 
 	// Habits routes
 	habitsGroup := protected.Group("/habits")
 	c.HabitsHandler.RegisterRoutes(habitsGroup)
+
+	adminGroup := protected.Group("/admin")
+	adminGroup.Use(middleware.RequireAdmin(c.Responder))
+	c.AdminHandler.RegisterRoutes(adminGroup)
 
 	// Journal routes
 	journalGroup := protected.Group("/journal")
