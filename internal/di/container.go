@@ -131,7 +131,7 @@ func (c *Container) RegisterRoutes(r *router.Router) {
 	r.Handler().Use(middleware.CORSMiddleware())
 	r.Handler().Use(middleware.RequestLogger(c.LogService))
 
-	swaggerHandler.Register(r.Handler(), c.Cfg.Server.ExposeSwagger)
+	swaggerHandler.Register(r.Handler(), c.Cfg.Server.ExposeSwagger, c.Cfg.Server.SwaggerUser, c.Cfg.Server.SwaggerPassword)
 
 	// Health check
 	r.GET("/health", HealthCheck)

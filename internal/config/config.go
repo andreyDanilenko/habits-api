@@ -15,9 +15,11 @@ type Config struct {
 }
 
 type ServerConfig struct {
-	Port          string
-	Host          string
-	ExposeSwagger bool
+	Port            string
+	Host            string
+	ExposeSwagger   bool
+	SwaggerUser     string
+	SwaggerPassword string
 }
 
 type DatabaseConfig struct {
@@ -45,9 +47,11 @@ func Load() (*Config, error) {
 
 	return &Config{
 		Server: ServerConfig{
-			Port:          getEnv("SERVER_PORT", ""),
-			Host:          getEnv("SERVER_HOST", ""),
-			ExposeSwagger: getEnvBool("EXPOSE_SWAGGER", true),
+			Port:            getEnv("SERVER_PORT", ""),
+			Host:            getEnv("SERVER_HOST", ""),
+			ExposeSwagger:   getEnvBool("EXPOSE_SWAGGER", true),
+			SwaggerUser:     getEnv("SWAGGER_USER", ""),
+			SwaggerPassword: getEnv("SWAGGER_PASSWORD", ""),
 		},
 		Database: DatabaseConfig{
 			Host:     getEnv("DB_HOST", ""),
