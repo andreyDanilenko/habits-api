@@ -3,12 +3,12 @@ package habits
 const (
 	RouteList        = ""
 	RouteCreate      = ""
-	RouteGet         = "/:id"
-	RouteUpdate      = "/:id"
-	RouteDelete      = "/:id"
-	RouteComplete    = "/:id/complete"
-	RouteToggle      = "/:id/toggle"
-	RouteStats       = "/:id/stats"
+	RouteGet         = "/:habitId"
+	RouteUpdate      = "/:habitId"
+	RouteDelete      = "/:habitId"
+	RouteComplete    = "/:habitId/complete"
+	RouteToggle      = "/:habitId/toggle"
+	RouteStats       = "/:habitId/stats"
 	RouteCompletions = "/completions"
 	RouteCalendar    = "/calendar"
 )

@@ -104,7 +104,7 @@ func (h *Handler) Get(c *gin.Context) {
 	role, _ := c.Get(middleware.GinRoleKey)
 	userRole := role.(model.UserRole)
 
-	workspaceID := c.Param("id")
+	workspaceID := c.Param("workspaceId")
 	workspace, err := h.service.Get(c.Request.Context(), workspaceID, userID, userRole)
 	if err != nil {
 		switch err {
@@ -131,7 +131,7 @@ func (h *Handler) Update(c *gin.Context) {
 	role, _ := c.Get(middleware.GinRoleKey)
 	userRole := role.(model.UserRole)
 
-	workspaceID := c.Param("id")
+	workspaceID := c.Param("workspaceId")
 	var req model.UpdateWorkspaceDto
 	if err := c.ShouldBindJSON(&req); err != nil {
 		h.responder.BadRequest(c, "Invalid request")
@@ -164,7 +164,7 @@ func (h *Handler) Delete(c *gin.Context) {
 	role, _ := c.Get(middleware.GinRoleKey)
 	userRole := role.(model.UserRole)
 
-	workspaceID := c.Param("id")
+	workspaceID := c.Param("workspaceId")
 	err := h.service.Delete(c.Request.Context(), workspaceID, userID, userRole)
 	if err != nil {
 		switch err {
@@ -229,7 +229,7 @@ func (h *Handler) Switch(c *gin.Context) {
 		userRole = roleVal.(model.UserRole)
 	}
 
-	workspaceID := c.Param("id")
+	workspaceID := c.Param("workspaceId")
 	if workspaceID == "" {
 		h.responder.BadRequest(c, "Workspace ID required")
 		return
@@ -276,7 +276,7 @@ func (h *Handler) GetModules(c *gin.Context) {
 		userRole = roleVal.(model.UserRole)
 	}
 
-	workspaceID := c.Param("id")
+	workspaceID := c.Param("workspaceId")
 	if workspaceID == "" {
 		h.responder.BadRequest(c, "Workspace ID required")
 		return
@@ -311,7 +311,7 @@ func (h *Handler) EnableModule(c *gin.Context) {
 		userRole = roleVal.(model.UserRole)
 	}
 
-	workspaceID := c.Param("id")
+	workspaceID := c.Param("workspaceId")
 	if workspaceID == "" {
 		h.responder.BadRequest(c, "Workspace ID required")
 		return
@@ -356,7 +356,7 @@ func (h *Handler) DisableModule(c *gin.Context) {
 		userRole = roleVal.(model.UserRole)
 	}
 
-	workspaceID := c.Param("id")
+	workspaceID := c.Param("workspaceId")
 	moduleCode := c.Param("moduleCode")
 	if workspaceID == "" || moduleCode == "" {
 		h.responder.BadRequest(c, "Workspace ID and module code required")

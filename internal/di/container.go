@@ -139,7 +139,6 @@ func (c *Container) RegisterRoutes(r *router.Router) {
 	// Protected routes
 	protected := apiV1.Group("")
 	protected.Use(middleware.GinAuthMiddleware(c.TokenGen, c.Responder))
-	protected.Use(middleware.WorkspaceMiddleware(c.WorkspaceService))
 
 	// Protected auth routes (me)
 	protectedAuthGroup := protected.Group("/auth")
@@ -148,13 +147,10 @@ func (c *Container) RegisterRoutes(r *router.Router) {
 	// Workspace routes (and nested: master data, notes)
 	workspaceGroup := protected.Group("/workspaces")
 	c.WorkspaceHandler.RegisterRoutes(workspaceGroup)
-	wsIDGroup := workspaceGroup.Group("/:id")
+	wsIDGroup := workspaceGroup.Group("/:workspaceId")
 	c.MasterHandler.RegisterRoutes(wsIDGroup)
 	c.NotesHandler.RegisterRoutes(wsIDGroup)
-
-	// Habits routes
-	habitsGroup := protected.Group("/habits")
-	c.HabitsHandler.RegisterRoutes(habitsGroup)
+	c.HabitsHandler.RegisterRoutes(wsIDGroup)
 
 	adminGroup := protected.Group("/admin")
 	adminGroup.Use(middleware.RequireAdmin(c.Responder))

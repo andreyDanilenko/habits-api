@@ -31,37 +31,38 @@ func NewHandler(
 }
 
 func (h *Handler) RegisterRoutes(r *gin.RouterGroup) {
-	r.GET(RouteList, h.List)
-	r.POST(RouteCreate, h.Create)
-	r.GET(RouteGet, h.Get)
-	r.PUT(RouteUpdate, h.Update)
-	r.DELETE(RouteDelete, h.Delete)
-	r.POST(RouteComplete, h.Complete)
-	r.POST(RouteToggle, h.Toggle)
-	r.GET(RouteStats, h.GetStats)
-	r.GET(RouteCompletions, h.GetCompletions)
-	r.GET(RouteCalendar, h.GetCalendar)
+
+	habits := r.Group("/habits")
+	{
+		habits.GET(RouteList, h.List)
+		habits.POST(RouteCreate, h.Create)
+		habits.GET(RouteGet, h.Get)
+		habits.PUT(RouteUpdate, h.Update)
+		habits.DELETE(RouteDelete, h.Delete)
+		habits.POST(RouteComplete, h.Complete)
+		habits.POST(RouteToggle, h.Toggle)
+		habits.GET(RouteStats, h.GetStats)
+		habits.GET(RouteCompletions, h.GetCompletions)
+		habits.GET(RouteCalendar, h.GetCalendar)
+	}
 }
 
-func (h *Handler) requireWorkspace(c *gin.Context) (userID, workspaceID string, ok bool) {
+func (h *Handler) requireWorkspace(c *gin.Context) (userID string, ok bool) {
 	userID, ok = middleware.GetUserIDFromGin(c)
 	if !ok {
 		h.responder.Unauthorized(c, "Authentication required")
-		return "", "", false
+		return "", false
 	}
-	workspaceID, ok = middleware.GetWorkspaceIDFromGin(c)
-	if !ok || workspaceID == "" {
-		h.responder.BadRequest(c, "No workspace selected")
-		return "", "", false
-	}
-	return userID, workspaceID, true
+
+	return userID, true
 }
 
 func (h *Handler) List(c *gin.Context) {
-	_, workspaceID, ok := h.requireWorkspace(c)
+	_, ok := h.requireWorkspace(c)
 	if !ok {
 		return
 	}
+	workspaceIDParam := c.Param("workspaceId")
 
 	var targetDate *time.Time
 	if dateStr := c.Query("date"); dateStr != "" {
@@ -73,7 +74,7 @@ func (h *Handler) List(c *gin.Context) {
 		targetDate = &parsedDate
 	}
 
-	list, err := h.service.List(c.Request.Context(), workspaceID, targetDate)
+	list, err := h.service.List(c.Request.Context(), workspaceIDParam, targetDate)
 	if err != nil {
 		h.responder.InternalServerError(c, "Failed to list habits")
 		return
@@ -83,10 +84,11 @@ func (h *Handler) List(c *gin.Context) {
 }
 
 func (h *Handler) Create(c *gin.Context) {
-	userID, workspaceID, ok := h.requireWorkspace(c)
+	userID, ok := h.requireWorkspace(c)
 	if !ok {
 		return
 	}
+	workspaceIDParam := c.Param("workspaceId")
 
 	var req model.CreateHabitDto
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -98,7 +100,7 @@ func (h *Handler) Create(c *gin.Context) {
 		return
 	}
 
-	habit, err := h.service.Create(c.Request.Context(), req, userID, workspaceID)
+	habit, err := h.service.Create(c.Request.Context(), req, userID, workspaceIDParam)
 	if err != nil {
 		h.responder.InternalServerError(c, "Failed to create habit: "+err.Error())
 		return
@@ -108,18 +110,20 @@ func (h *Handler) Create(c *gin.Context) {
 }
 
 func (h *Handler) Get(c *gin.Context) {
-	userID, workspaceID, ok := h.requireWorkspace(c)
+	userID, ok := h.requireWorkspace(c)
 	if !ok {
 		return
 	}
 
-	id := c.Param("id")
-	if _, err := uuid.Parse(id); err != nil {
+	habitsID := c.Param("habitsId")
+	workspaceIDParam := c.Param("workspaceId")
+
+	if _, err := uuid.Parse(habitsID); err != nil {
 		h.responder.BadRequest(c, "Invalid habit ID")
 		return
 	}
 
-	habit, err := h.service.Get(c.Request.Context(), id, userID, workspaceID)
+	habit, err := h.service.Get(c.Request.Context(), habitsID, userID, workspaceIDParam)
 	if err != nil {
 		if err == habitsService.ErrHabitNotFound {
 			h.responder.NotFound(c, "Habit not found")
@@ -133,13 +137,15 @@ func (h *Handler) Get(c *gin.Context) {
 }
 
 func (h *Handler) Update(c *gin.Context) {
-	userID, workspaceID, ok := h.requireWorkspace(c)
+	userID, ok := h.requireWorkspace(c)
 	if !ok {
 		return
 	}
 
-	id := c.Param("id")
-	if _, err := uuid.Parse(id); err != nil {
+	workspaceIDParam := c.Param("workspaceId")
+	habitID := c.Param("habitId")
+
+	if _, err := uuid.Parse(habitID); err != nil {
 		h.responder.BadRequest(c, "Invalid habit ID")
 		return
 	}
@@ -150,7 +156,7 @@ func (h *Handler) Update(c *gin.Context) {
 		return
 	}
 
-	habit, err := h.service.Update(c.Request.Context(), id, req, userID, workspaceID)
+	habit, err := h.service.Update(c.Request.Context(), habitID, req, userID, workspaceIDParam)
 	if err != nil {
 		if err == habitsService.ErrHabitNotFound {
 			h.responder.NotFound(c, "Habit not found")
@@ -164,18 +170,19 @@ func (h *Handler) Update(c *gin.Context) {
 }
 
 func (h *Handler) Delete(c *gin.Context) {
-	userID, workspaceID, ok := h.requireWorkspace(c)
+	userID, ok := h.requireWorkspace(c)
 	if !ok {
 		return
 	}
 
-	id := c.Param("id")
-	if _, err := uuid.Parse(id); err != nil {
+	workspaceIDParam := c.Param("workspaceId")
+	habitID := c.Param("habitId")
+	if _, err := uuid.Parse(habitID); err != nil {
 		h.responder.BadRequest(c, "Invalid habit ID")
 		return
 	}
 
-	err := h.service.Delete(c.Request.Context(), id, userID, workspaceID)
+	err := h.service.Delete(c.Request.Context(), habitID, userID, workspaceIDParam)
 	if err != nil {
 		if err == habitsService.ErrHabitNotFound {
 			h.responder.NotFound(c, "Habit not found")
@@ -189,13 +196,14 @@ func (h *Handler) Delete(c *gin.Context) {
 }
 
 func (h *Handler) Complete(c *gin.Context) {
-	userID, workspaceID, ok := h.requireWorkspace(c)
+	userID, ok := h.requireWorkspace(c)
 	if !ok {
 		return
 	}
 
-	id := c.Param("id")
-	if _, err := uuid.Parse(id); err != nil {
+	workspaceIDParam := c.Param("workspaceId")
+	habitID := c.Param("habitId")
+	if _, err := uuid.Parse(habitID); err != nil {
 		h.responder.BadRequest(c, "Invalid habit ID")
 		return
 	}
@@ -216,7 +224,6 @@ func (h *Handler) Complete(c *gin.Context) {
 		return
 	}
 
-	// Валидация rating: должен быть от 1 до 5, или 0 (не указан)
 	if req.Rating < 0 || req.Rating > 5 {
 		h.responder.BadRequest(c, "Rating must be between 0 and 5")
 		return
@@ -227,7 +234,6 @@ func (h *Handler) Complete(c *gin.Context) {
 		timePtr = &req.Time
 	}
 
-	// Если rating = 0, передаем NULL в базу (не указан)
 	var ratingValue interface{}
 	if req.Rating == 0 {
 		ratingValue = nil
@@ -235,7 +241,7 @@ func (h *Handler) Complete(c *gin.Context) {
 		ratingValue = req.Rating
 	}
 
-	completion, err := h.service.Complete(c.Request.Context(), id, userID, workspaceID, date, req.Notes, ratingValue, timePtr)
+	completion, err := h.service.Complete(c.Request.Context(), habitID, userID, workspaceIDParam, date, req.Notes, ratingValue, timePtr)
 	if err != nil {
 		if err == habitsService.ErrHabitNotFound {
 			h.responder.NotFound(c, "Habit not found")
@@ -249,13 +255,14 @@ func (h *Handler) Complete(c *gin.Context) {
 }
 
 func (h *Handler) Toggle(c *gin.Context) {
-	userID, workspaceID, ok := h.requireWorkspace(c)
+	userID, ok := h.requireWorkspace(c)
 	if !ok {
 		return
 	}
 
-	id := c.Param("id")
-	if _, err := uuid.Parse(id); err != nil {
+	workspaceIDParam := c.Param("workspaceId")
+	habitID := c.Param("habitId")
+	if _, err := uuid.Parse(habitID); err != nil {
 		h.responder.BadRequest(c, "Invalid habit ID")
 		return
 	}
@@ -273,7 +280,7 @@ func (h *Handler) Toggle(c *gin.Context) {
 		return
 	}
 
-	added, completion, err := h.service.Toggle(c.Request.Context(), id, userID, workspaceID, date)
+	added, completion, err := h.service.Toggle(c.Request.Context(), habitID, userID, workspaceIDParam, date)
 	if err != nil {
 		if err == habitsService.ErrHabitNotFound {
 			h.responder.NotFound(c, "Habit not found")
@@ -287,18 +294,19 @@ func (h *Handler) Toggle(c *gin.Context) {
 }
 
 func (h *Handler) GetStats(c *gin.Context) {
-	userID, workspaceID, ok := h.requireWorkspace(c)
+	userID, ok := h.requireWorkspace(c)
 	if !ok {
 		return
 	}
 
-	id := c.Param("id")
-	if _, err := uuid.Parse(id); err != nil {
+	workspaceIDParam := c.Param("workspaceId")
+	habitID := c.Param("habitId")
+	if _, err := uuid.Parse(habitID); err != nil {
 		h.responder.BadRequest(c, "Invalid habit ID")
 		return
 	}
 
-	stats, err := h.service.GetStats(c.Request.Context(), id, userID, workspaceID)
+	stats, err := h.service.GetStats(c.Request.Context(), habitID, userID, workspaceIDParam)
 	if err != nil {
 		if err == habitsService.ErrHabitNotFound {
 			h.responder.NotFound(c, "Habit not found")
@@ -312,11 +320,12 @@ func (h *Handler) GetStats(c *gin.Context) {
 }
 
 func (h *Handler) GetCompletions(c *gin.Context) {
-	userID, workspaceID, ok := h.requireWorkspace(c)
+	userID, ok := h.requireWorkspace(c)
 	if !ok {
 		return
 	}
 
+	workspaceIDParam := c.Param("workspaceId")
 	habitID := c.Query("habit_id")
 	var habitUUID *uuid.UUID
 	if habitID != "" {
@@ -336,8 +345,7 @@ func (h *Handler) GetCompletions(c *gin.Context) {
 
 	var list []model.HabitCompletion
 	if habitUUID != nil {
-		// Запрос для конкретной привычки
-		completions, err := h.service.GetCompletions(c.Request.Context(), habitUUID.String(), userID, workspaceID, start, end)
+		completions, err := h.service.GetCompletions(c.Request.Context(), habitUUID.String(), userID, workspaceIDParam, start, end)
 		if err != nil {
 			if err == habitsService.ErrHabitNotFound {
 				h.responder.NotFound(c, "Habit not found")
@@ -348,8 +356,7 @@ func (h *Handler) GetCompletions(c *gin.Context) {
 		}
 		list = completions
 	} else {
-		// Запрос для всех привычек пользователя в workspace
-		completions, err := h.service.GetAllCompletions(c.Request.Context(), userID, workspaceID, start, end)
+		completions, err := h.service.GetAllCompletions(c.Request.Context(), userID, workspaceIDParam, start, end)
 		if err != nil {
 			h.responder.InternalServerError(c, "Failed to get completions")
 			return
@@ -361,18 +368,19 @@ func (h *Handler) GetCompletions(c *gin.Context) {
 }
 
 func (h *Handler) GetCalendar(c *gin.Context) {
-	userID, workspaceID, ok := h.requireWorkspace(c)
+	userID, ok := h.requireWorkspace(c)
 	if !ok {
 		return
 	}
 
+	workspaceIDParam := c.Param("workspaceId")
 	start, end, err := parseDateRange(c.Query("start"), c.Query("end"))
 	if err != nil {
 		h.responder.BadRequest(c, "Invalid start/end date")
 		return
 	}
 
-	cal, err := h.service.GetCalendar(c.Request.Context(), userID, workspaceID, start, end)
+	cal, err := h.service.GetCalendar(c.Request.Context(), userID, workspaceIDParam, start, end)
 	if err != nil {
 		h.responder.InternalServerError(c, "Failed to get calendar")
 		return

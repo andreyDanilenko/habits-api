@@ -15,7 +15,7 @@ import (
 )
 
 type Handler struct {
-	masterSvc   *masterService.Service
+	masterSvc    *masterService.Service
 	workspaceSvc *workspaceService.Service
 	responder    *response.Responder
 	validate     *validator.Validate
@@ -28,7 +28,7 @@ func NewHandler(
 	validate *validator.Validate,
 ) *Handler {
 	return &Handler{
-		masterSvc:   masterSvc,
+		masterSvc:    masterSvc,
 		workspaceSvc: workspaceSvc,
 		responder:    responder,
 		validate:     validate,
@@ -60,7 +60,7 @@ func (h *Handler) requireWorkspaceAccess(c *gin.Context) (workspaceID, userID st
 		h.responder.Unauthorized(c, "Authentication required")
 		return "", "", false
 	}
-	workspaceID = c.Param("id")
+	workspaceID = c.Param("workspaceId")
 	if workspaceID == "" {
 		h.responder.BadRequest(c, "Workspace ID required")
 		return "", "", false
