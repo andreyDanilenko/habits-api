@@ -1,0 +1,232 @@
+basePath: /api/v1
+definitions:
+  backend_internal_model.CreateWorkspaceDto:
+    properties:
+      color:
+        type: string
+      description:
+        type: string
+      name:
+        type: string
+    required:
+    - name
+    type: object
+  backend_internal_model.LoginRequest:
+    properties:
+      email:
+        type: string
+      password:
+        type: string
+    required:
+    - email
+    - password
+    type: object
+  backend_internal_model.RegisterRequest:
+    properties:
+      email:
+        type: string
+      name:
+        minLength: 1
+        type: string
+      password:
+        minLength: 8
+        type: string
+    required:
+    - email
+    - name
+    - password
+    type: object
+host: localhost:8080
+info:
+  contact: {}
+  description: Application backend API
+  title: Backend API
+  version: "1.0"
+paths:
+  /auth/login:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: email и password
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/backend_internal_model.LoginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: user, expires_in
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Login with email and password
+      tags:
+      - auth
+  /auth/logout:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Logout (clear cookie)
+      tags:
+      - auth
+  /auth/me:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: user
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Current user (JWT)
+      tags:
+      - auth
+  /auth/refresh:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Refreshing the access token (using a refresh cookie)
+      tags:
+      - auth
+  /auth/register:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: email, password, name
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/backend_internal_model.RegisterRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: user, expires_in
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Register user
+      tags:
+      - auth
+  /workspaces:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: workspaces
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List of user workspaces
+      tags:
+      - workspaces
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: workspace data
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/backend_internal_model.CreateWorkspaceDto'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create workspace
+      tags:
+      - workspaces
+  /workspaces/{workspaceId}:
+    get:
+      parameters:
+      - description: ID workspace
+        in: path
+        name: workspaceId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get a workspace by ID
+      tags:
+      - workspaces
+schemes:
+- http
+securityDefinitions:
+  BearerAuth:
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

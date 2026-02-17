@@ -9,6 +9,7 @@ import (
 	loggerHandler "backend/internal/handler/logger"
 	masterHandler "backend/internal/handler/master"
 	notesHandler "backend/internal/handler/notes"
+	swaggerHandler "backend/internal/handler/swagger"
 	workspaceHandler "backend/internal/handler/workspace"
 	"backend/internal/middleware"
 	habitsRepo "backend/internal/repository/habits"
@@ -39,6 +40,7 @@ import (
 )
 
 type Container struct {
+	Cfg              *config.Config
 	Router           *router.Router
 	AuthHandler      *authHandler.Handler
 	AdminHandler     *adminHandler.Handler
@@ -98,7 +100,7 @@ func NewContainer(db *sql.DB, cfg *config.Config) *Container {
 	// Journal
 	journalRepository := journalRepo.NewRepository(db)
 	journalSvc := journalService.NewService(journalRepository)
-	journalHdlr := journalHandler.NewHandler(journalSvc, responder, validate)
+	journalHdlr := journalHandler.NewHandler(journalSvc, workspaceSvc, responder, validate)
 
 	// Logger
 	loggerHdlr := loggerHandler.NewHandler(logService, responder, validate)
@@ -107,6 +109,7 @@ func NewContainer(db *sql.DB, cfg *config.Config) *Container {
 	adminHdlr := adminHandler.NewHandler(workspaceSvc, userRepository, responder)
 
 	return &Container{
+		Cfg:              cfg,
 		Router:           r,
 		AuthHandler:      authHdlr,
 		AdminHandler:     adminHdlr,
@@ -127,6 +130,8 @@ func NewContainer(db *sql.DB, cfg *config.Config) *Container {
 func (c *Container) RegisterRoutes(r *router.Router) {
 	r.Handler().Use(middleware.CORSMiddleware())
 	r.Handler().Use(middleware.RequestLogger(c.LogService))
+
+	swaggerHandler.Register(r.Handler(), c.Cfg.Server.ExposeSwagger)
 
 	// Health check
 	r.GET("/health", HealthCheck)
@@ -151,14 +156,11 @@ func (c *Container) RegisterRoutes(r *router.Router) {
 	c.MasterHandler.RegisterRoutes(wsIDGroup)
 	c.NotesHandler.RegisterRoutes(wsIDGroup)
 	c.HabitsHandler.RegisterRoutes(wsIDGroup)
+	c.JournalHandler.RegisterRoutes(wsIDGroup)
 
 	adminGroup := protected.Group("/admin")
 	adminGroup.Use(middleware.RequireAdmin(c.Responder))
 	c.AdminHandler.RegisterRoutes(adminGroup)
-
-	// Journal routes
-	journalGroup := protected.Group("/journal")
-	c.JournalHandler.RegisterRoutes(journalGroup)
 
 	// Logger routes
 	loggerGroup := protected.Group("/logs")

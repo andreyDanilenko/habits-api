@@ -7,6 +7,15 @@ import (
 	"backend/internal/config"
 )
 
+// @title           Backend API
+// @version         1.0
+// @description     Application backend API
+// @host            localhost:8080
+// @BasePath        /api/v1
+// @schemes         http
+// @securityDefinitions.apikey BearerAuth
+// @in header
+// @name Authorization
 func main() {
 	cfg, err := config.Load()
 	if err != nil {

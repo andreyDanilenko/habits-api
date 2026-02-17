@@ -46,6 +46,13 @@ func (h *Handler) RegisterRoutes(r *gin.RouterGroup) {
 	r.DELETE(RouteModuleOne, h.DisableModule)
 }
 
+// List godoc
+// @Summary      List of user workspaces
+// @Tags         workspaces
+// @Security     BearerAuth
+// @Produce      json
+// @Success      200  {object}  map[string]interface{}  "workspaces"
+// @Router       /workspaces [get]
 func (h *Handler) List(c *gin.Context) {
 	userID, ok := middleware.GetUserIDFromGin(c)
 	if !ok {
@@ -67,6 +74,15 @@ func (h *Handler) List(c *gin.Context) {
 	h.responder.SuccessWithData(c, gin.H{"workspaces": workspaces})
 }
 
+// Create godoc
+// @Summary      Create workspace
+// @Tags         workspaces
+// @Security     BearerAuth
+// @Accept       json
+// @Produce      json
+// @Param        body  body  model.CreateWorkspaceDto  true  "workspace data"
+// @Success      201  {object}  map[string]interface{}
+// @Router       /workspaces [post]
 func (h *Handler) Create(c *gin.Context) {
 	userID, ok := middleware.GetUserIDFromGin(c)
 	if !ok {
@@ -94,6 +110,15 @@ func (h *Handler) Create(c *gin.Context) {
 	h.responder.Created(c, "Workspace created successfully", workspace)
 }
 
+// Get godoc
+// @Summary      Get a workspace by ID
+// @Tags         workspaces
+// @Security     BearerAuth
+// @Produce      json
+// @Param        workspaceId  path  string  true  "ID workspace"
+// @Success      200  {object}  map[string]interface{}
+// @Failure      403,404  {object}  map[string]interface{}
+// @Router       /workspaces/{workspaceId} [get]
 func (h *Handler) Get(c *gin.Context) {
 	userID, ok := middleware.GetUserIDFromGin(c)
 	if !ok {

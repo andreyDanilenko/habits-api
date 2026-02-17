@@ -49,7 +49,7 @@ func (h *Handler) requireWorkspaceAccess(c *gin.Context) (workspaceID, userID st
 		h.responder.Unauthorized(c, "Authentication required")
 		return "", "", false
 	}
-	workspaceID = c.Param("id")
+	workspaceID = c.Param("workspaceId")
 	if workspaceID == "" {
 		h.responder.BadRequest(c, "Workspace ID required")
 		return "", "", false

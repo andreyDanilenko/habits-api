@@ -53,6 +53,16 @@ func NewHandler(
 	}
 }
 
+// Login godoc
+// @Summary      Login with email and password
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Param        body  body  model.LoginRequest  true  "email и password"
+// @Success      200  {object}  map[string]interface{}  "user, expires_in"
+// @Failure      400  {object}  map[string]interface{}
+// @Failure      401  {object}  map[string]interface{}
+// @Router       /auth/login [post]
 func (h *Handler) Login(c *gin.Context) {
 	var req model.LoginRequest
 
@@ -87,6 +97,16 @@ func (h *Handler) Login(c *gin.Context) {
 	})
 }
 
+// Register godoc
+// @Summary      Register user
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Param        body  body  model.RegisterRequest  true  "email, password, name"
+// @Success      201  {object}  map[string]interface{}  "user, expires_in"
+// @Failure      400  {object}  map[string]interface{}
+// @Failure      409  {object}  map[string]interface{}
+// @Router       /auth/register [post]
 func (h *Handler) Register(c *gin.Context) {
 	var req model.RegisterRequest
 
@@ -167,11 +187,25 @@ func (h *Handler) Register(c *gin.Context) {
 	})
 }
 
+// Logout godoc
+// @Summary      Logout (clear cookie)
+// @Tags         auth
+// @Produce      json
+// @Success      200  {object}  map[string]interface{}
+// @Router       /auth/logout [post]
 func (h *Handler) Logout(c *gin.Context) {
 	h.cookieManager.Delete(c.Writer, "access_token")
 	h.responder.SuccessWithMessage(c, "Logged out successfully")
 }
 
+// Me godoc
+// @Summary      Current user (JWT)
+// @Tags         auth
+// @Security     BearerAuth
+// @Produce      json
+// @Success      200  {object}  map[string]interface{}  "user"
+// @Failure      401  {object}  map[string]interface{}
+// @Router       /auth/me [get]
 func (h *Handler) Me(c *gin.Context) {
 	userID, ok := middleware.GetUserIDFromGin(c)
 	if !ok {
@@ -188,6 +222,12 @@ func (h *Handler) Me(c *gin.Context) {
 	h.responder.SuccessWithData(c, gin.H{"user": user})
 }
 
+// Refresh godoc
+// @Summary      Refreshing the access token (using a refresh cookie)
+// @Tags         auth
+// @Produce      json
+// @Success      200  {object}  map[string]interface{}
+// @Router       /auth/refresh [post]
 func (h *Handler) Refresh(c *gin.Context) {
 	h.responder.WriteError(c, http.StatusNotImplemented, "Refresh endpoint is not implemented yet")
 }
