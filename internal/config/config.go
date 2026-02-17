@@ -44,25 +44,25 @@ func Load() (*Config, error) {
 
 	return &Config{
 		Server: ServerConfig{
-			Port: getEnv("SERVER_PORT", "8080"),
-			Host: getEnv("SERVER_HOST", "0.0.0.0"),
+			Port: getEnv("SERVER_PORT", ""),
+			Host: getEnv("SERVER_HOST", ""),
 		},
 		Database: DatabaseConfig{
-			Host:     getEnv("DB_HOST", "localhost"),
-			Port:     getEnv("DB_PORT", "5432"),
-			User:     getEnv("DB_USER", "postgres"),
-			Password: getEnv("DB_PASSWORD", "habits_pass"),
-			DBName:   getEnv("DB_NAME", "habits_db"),
+			Host:     getEnv("DB_HOST", ""),
+			Port:     getEnv("DB_PORT", ""),
+			User:     getEnv("DB_USER", ""),
+			Password: getEnv("DB_PASSWORD", ""),
+			DBName:   getEnv("DB_NAME", ""),
 		},
 		Logs: LogsConfig{
 			Dir: getEnv("LOGS_DIR", "./logs"),
 		},
 		Auth: AuthConfig{
-			JWTSecretKey:      getEnv("JWT_SECRET_KEY", "secret-key"),
+			JWTSecretKey:      getEnv("JWT_SECRET_KEY", ""),
 			JWTExpiration:     getEnvDuration("JWT_EXPIRATION", 24*time.Hour),
 			RefreshExpiration: getEnvDuration("REFRESH_EXPIRATION", 720*time.Hour),
-			CookieDomain:      getEnv("COOKIE_DOMAIN", "localhost"),
-			SecureCookies:     getEnvBool("SECURE_COOKIES", false),
+			CookieDomain:      getEnv("COOKIE_DOMAIN", ""),
+			SecureCookies:     getEnvBool("SECURE_COOKIES", true),
 		},
 	}, nil
 }
