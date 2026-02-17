@@ -3,7 +3,7 @@ package journal
 const (
 	RouteList   = ""
 	RouteCreate = ""
-	RouteGet    = "/:date"
-	RouteUpdate = "/:date"
-	RouteDelete = "/:date"
+	RouteGet    = "/:entryId"
+	RouteUpdate = "/:entryId"
+	RouteDelete = "/:entryId"
 )
