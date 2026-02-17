@@ -21,6 +21,13 @@ definitions:
     - email
     - password
     type: object
+  backend_internal_model.LoginResponse:
+    properties:
+      expires_in:
+        type: integer
+      user:
+        $ref: '#/definitions/backend_internal_model.User'
+    type: object
   backend_internal_model.RegisterRequest:
     properties:
       email:
@@ -36,6 +43,53 @@ definitions:
     - name
     - password
     type: object
+  backend_internal_model.User:
+    properties:
+      avatarUrl:
+        type: string
+      createdAt:
+        type: string
+      email:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      role:
+        $ref: '#/definitions/backend_internal_model.UserRole'
+      status:
+        $ref: '#/definitions/backend_internal_model.UserStatus'
+      updatedAt:
+        type: string
+    type: object
+  backend_internal_model.UserRole:
+    enum:
+    - USER
+    - ADMIN
+    type: string
+    x-enum-varnames:
+    - UserRoleUser
+    - UserRoleAdmin
+  backend_internal_model.UserStatus:
+    enum:
+    - ACTIVE
+    - DELETED
+    type: string
+    x-enum-varnames:
+    - UserStatusActive
+    - UserStatusDeleted
+  backend_pkg_response.ErrorResponse:
+    properties:
+      details: {}
+      error:
+        type: string
+      error_code:
+        type: string
+      message:
+        type: string
+      status:
+        type: string
+    type: object
 host: localhost:8080
 info:
   contact: {}
@@ -47,8 +101,9 @@ paths:
     post:
       consumes:
       - application/json
+      description: Authenticate user with email and password
       parameters:
-      - description: email и password
+      - description: Login credentials
         in: body
         name: body
         required: true
@@ -58,21 +113,18 @@ paths:
       - application/json
       responses:
         "200":
-          description: user, expires_in
+          description: User logged in successfully
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/backend_internal_model.LoginResponse'
         "400":
-          description: Bad Request
+          description: Validation error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/backend_pkg_response.ErrorResponse'
         "401":
-          description: Unauthorized
+          description: Invalid credentials
           schema:
-            additionalProperties: true
-            type: object
-      summary: Login with email and password
+            $ref: '#/definitions/backend_pkg_response.ErrorResponse'
+      summary: Login user
       tags:
       - auth
   /auth/logout:
@@ -90,22 +142,21 @@ paths:
       - auth
   /auth/me:
     get:
+      description: Get information about currently authenticated user
       produces:
       - application/json
       responses:
         "200":
-          description: user
+          description: User information
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/backend_internal_model.User'
         "401":
           description: Unauthorized
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/backend_pkg_response.ErrorResponse'
       security:
       - BearerAuth: []
-      summary: Current user (JWT)
+      summary: Get current user
       tags:
       - auth
   /auth/refresh:
@@ -125,8 +176,9 @@ paths:
     post:
       consumes:
       - application/json
+      description: Register a new user with email, password and name
       parameters:
-      - description: email, password, name
+      - description: Registration data
         in: body
         name: body
         required: true
@@ -136,20 +188,17 @@ paths:
       - application/json
       responses:
         "201":
-          description: user, expires_in
+          description: User registered successfully
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/backend_internal_model.LoginResponse'
         "400":
-          description: Bad Request
+          description: Validation error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/backend_pkg_response.ErrorResponse'
         "409":
-          description: Conflict
+          description: User already exists
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/backend_pkg_response.ErrorResponse'
       summary: Register user
       tags:
       - auth

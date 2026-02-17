@@ -17,6 +17,7 @@ const docTemplate = `{
     "paths": {
         "/auth/login": {
             "post": {
+                "description": "Authenticate user with email and password",
                 "consumes": [
                     "application/json"
                 ],
@@ -26,10 +27,10 @@ const docTemplate = `{
                 "tags": [
                     "auth"
                 ],
-                "summary": "Login with email and password",
+                "summary": "Login user",
                 "parameters": [
                     {
-                        "description": "email и password",
+                        "description": "Login credentials",
                         "name": "body",
                         "in": "body",
                         "required": true,
@@ -40,24 +41,21 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "user, expires_in",
+                        "description": "User logged in successfully",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/backend_internal_model.LoginResponse"
                         }
                     },
                     "400": {
-                        "description": "Bad Request",
+                        "description": "Validation error",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/backend_pkg_response.ErrorResponse"
                         }
                     },
                     "401": {
-                        "description": "Unauthorized",
+                        "description": "Invalid credentials",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/backend_pkg_response.ErrorResponse"
                         }
                     }
                 }
@@ -90,26 +88,25 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
+                "description": "Get information about currently authenticated user",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "auth"
                 ],
-                "summary": "Current user (JWT)",
+                "summary": "Get current user",
                 "responses": {
                     "200": {
-                        "description": "user",
+                        "description": "User information",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/backend_internal_model.User"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/backend_pkg_response.ErrorResponse"
                         }
                     }
                 }
@@ -137,6 +134,7 @@ const docTemplate = `{
         },
         "/auth/register": {
             "post": {
+                "description": "Register a new user with email, password and name",
                 "consumes": [
                     "application/json"
                 ],
@@ -149,7 +147,7 @@ const docTemplate = `{
                 "summary": "Register user",
                 "parameters": [
                     {
-                        "description": "email, password, name",
+                        "description": "Registration data",
                         "name": "body",
                         "in": "body",
                         "required": true,
@@ -160,24 +158,21 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "201": {
-                        "description": "user, expires_in",
+                        "description": "User registered successfully",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/backend_internal_model.LoginResponse"
                         }
                     },
                     "400": {
-                        "description": "Bad Request",
+                        "description": "Validation error",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/backend_pkg_response.ErrorResponse"
                         }
                     },
                     "409": {
-                        "description": "Conflict",
+                        "description": "User already exists",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/backend_pkg_response.ErrorResponse"
                         }
                     }
                 }
@@ -327,6 +322,17 @@ const docTemplate = `{
                 }
             }
         },
+        "backend_internal_model.LoginResponse": {
+            "type": "object",
+            "properties": {
+                "expires_in": {
+                    "type": "integer"
+                },
+                "user": {
+                    "$ref": "#/definitions/backend_internal_model.User"
+                }
+            }
+        },
         "backend_internal_model.RegisterRequest": {
             "type": "object",
             "required": [
@@ -345,6 +351,75 @@ const docTemplate = `{
                 "password": {
                     "type": "string",
                     "minLength": 8
+                }
+            }
+        },
+        "backend_internal_model.User": {
+            "type": "object",
+            "properties": {
+                "avatarUrl": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "role": {
+                    "$ref": "#/definitions/backend_internal_model.UserRole"
+                },
+                "status": {
+                    "$ref": "#/definitions/backend_internal_model.UserStatus"
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "backend_internal_model.UserRole": {
+            "type": "string",
+            "enum": [
+                "USER",
+                "ADMIN"
+            ],
+            "x-enum-varnames": [
+                "UserRoleUser",
+                "UserRoleAdmin"
+            ]
+        },
+        "backend_internal_model.UserStatus": {
+            "type": "string",
+            "enum": [
+                "ACTIVE",
+                "DELETED"
+            ],
+            "x-enum-varnames": [
+                "UserStatusActive",
+                "UserStatusDeleted"
+            ]
+        },
+        "backend_pkg_response.ErrorResponse": {
+            "type": "object",
+            "properties": {
+                "details": {},
+                "error": {
+                    "type": "string"
+                },
+                "error_code": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
                 }
             }
         }

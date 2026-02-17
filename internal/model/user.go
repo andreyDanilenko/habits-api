@@ -12,7 +12,7 @@ const (
 type UserStatus string
 
 const (
-	UserStatusActive UserStatus = "ACTIVE"
+	UserStatusActive  UserStatus = "ACTIVE"
 	UserStatusDeleted UserStatus = "DELETED"
 )
 
@@ -38,4 +38,9 @@ type RegisterRequest struct {
 type LoginRequest struct {
 	Email    string `json:"email" validate:"required,email"`
 	Password string `json:"password" validate:"required"`
+}
+type LoginResponse struct {
+	User        User   `json:"user"`
+	AccessToken string `json:"-"`
+	ExpiresIn   int    `json:"expires_in"`
 }
