@@ -134,7 +134,7 @@ func (c *Container) RegisterRoutes(r *router.Router) {
 	swaggerHandler.Register(r.Handler(), c.Cfg.Server.ExposeSwagger, c.Cfg.Server.SwaggerUser, c.Cfg.Server.SwaggerPassword)
 
 	// Health check
-	r.GET("/health", HealthCheck)
+	r.GET("/api/v1/health", HealthCheck)
 	apiV1 := r.Group("/api/v1")
 
 	// Public auth routes (login, register, logout, refresh)
