@@ -1,56 +1,48 @@
-name: Deploy Habit Api
+# deploy.yml
+name: Build and Push Habits API Image
 
 on:
   push:
     branches:
       - master
       - main
+    paths:
+      - '**'
   workflow_dispatch:
 
 jobs:
-  deploy:
+  build-and-push:
     runs-on: ubuntu-latest
-
+    
     steps:
-      - name: Deploy to server
-        uses: appleboy/ssh-action@v1.0.3
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+      
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
         with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.DEPLOY_SECRET_KEY }}
-          script: |
-            # Только обновление кода по git. Контейнеры запускает только deployment workflow.
-            # Переходим в папку проекта
-            cd /root/project/habit-api || mkdir -p /root/project/habits-api && cd /root/project/habits-api
-            
-            echo "=== Обновляем репозиторий habits-client ==="
-            
-            # Удаляем блок с SSH - используем только HTTPS
-            
-            # ЕСЛИ ПАПКА ПУСТАЯ - КЛОНИРУЕМ ЧЕРЕЗ HTTPS
-            if [ ! -d ".git" ]; then
-              echo "❌ Git репозиторий не найден. Клонируем..."
-              rm -rf ./* 2>/dev/null || true
-              git clone https://github.com/andreyDanilenko/habits-api.git .
-            else
-              echo "✅ Git репозиторий найден. Обновляем..."
-              # Меняем remote на HTTPS если он был SSH
-              git remote set-url origin https://github.com/andreyDanilenko/habits-api.git
-              git fetch --all
-              git reset --hard origin/master 2>/dev/null || git reset --hard origin/main
-              git pull origin master 2>/dev/null || git pull origin main
-            fi
-            
-            echo "=== Проверяем изменения ==="
-            git log --oneline -3
-            echo "Текущая ветка: $(git branch --show-current)"
-            
-            echo "=== Содержимое папки ==="
-            ls -la
-            
-            # Если нужно запустить деплой приложения, добавьте здесь:
-            # if [ -f "package.json" ]; then
-            #   echo "Устанавливаем зависимости..."
-            #   npm install
-            #   npm run build
-            # fi
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v4
+        with:
+          images: ${{ secrets.DOCKER_USERNAME }}/habits-api
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix={{sha}}
+            type=ref,event=branch
+      
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/habits-api:buildcache
+          cache-to: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/habits-api:buildcache,mode=max
