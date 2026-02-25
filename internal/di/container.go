@@ -170,6 +170,6 @@ func (c *Container) RegisterRoutes(r *router.Router) {
 func HealthCheck(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "ok",
-		"service": "backend",
+		"service": "backend check ci",
 	})
 }
