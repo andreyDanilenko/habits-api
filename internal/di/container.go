@@ -4,30 +4,36 @@ import (
 	"backend/internal/config"
 	adminHandler "backend/internal/handler/admin"
 	authHandler "backend/internal/handler/auth"
+	crmHandler "backend/internal/handler/crm"
 	habitsHandler "backend/internal/handler/habits"
 	journalHandler "backend/internal/handler/journal"
 	loggerHandler "backend/internal/handler/logger"
 	masterHandler "backend/internal/handler/master"
 	notesHandler "backend/internal/handler/notes"
+	projectHandler "backend/internal/handler/project"
 	swaggerHandler "backend/internal/handler/swagger"
 	workspaceHandler "backend/internal/handler/workspace"
 	"backend/internal/middleware"
+	crmRepo "backend/internal/repository/crm"
 	habitsRepo "backend/internal/repository/habits"
 	journalRepo "backend/internal/repository/journal"
 	licenseRepo "backend/internal/repository/license"
 	loggerRepo "backend/internal/repository/logger"
 	masterRepo "backend/internal/repository/master"
 	notesRepo "backend/internal/repository/notes"
+	projectRepo "backend/internal/repository/project"
 	userRepo "backend/internal/repository/user"
 	userPrefsRepo "backend/internal/repository/user_preferences"
 	workspaceRepo "backend/internal/repository/workspace"
 	"backend/internal/router"
 	authService "backend/internal/service/auth"
+	crmService "backend/internal/service/crm"
 	habitsService "backend/internal/service/habits"
 	journalService "backend/internal/service/journal"
 	loggerService "backend/internal/service/logger"
 	masterService "backend/internal/service/master"
 	notesService "backend/internal/service/notes"
+	projectService "backend/internal/service/project"
 	workspaceService "backend/internal/service/workspace"
 	"backend/pkg/auth/token"
 	"backend/pkg/http/cookies"
@@ -47,7 +53,9 @@ type Container struct {
 	WorkspaceHandler *workspaceHandler.Handler
 	WorkspaceService *workspaceService.Service
 	MasterHandler    *masterHandler.Handler
+	CrmHandler       *crmHandler.Handler
 	NotesHandler     *notesHandler.Handler
+	ProjectHandler   *projectHandler.Handler
 	HabitsHandler    *habitsHandler.Handler
 	JournalHandler   *journalHandler.Handler
 	LoggerHandler    *loggerHandler.Handler
@@ -87,6 +95,10 @@ func NewContainer(db *sql.DB, cfg *config.Config) *Container {
 	masterSvc := masterService.NewService(masterRepository)
 	masterHdlr := masterHandler.NewHandler(masterSvc, workspaceSvc, responder, validate)
 
+	crmRepository := crmRepo.NewRepository(db)
+	crmSvc := crmService.NewService(crmRepository, workspaceSvc, userRepository)
+	crmHdlr := crmHandler.NewHandler(crmSvc, workspaceSvc, responder, validate)
+
 	// Notes module
 	notesRepository := notesRepo.NewRepository(db)
 	notesSvc := notesService.NewService(notesRepository)
@@ -102,6 +114,10 @@ func NewContainer(db *sql.DB, cfg *config.Config) *Container {
 	journalSvc := journalService.NewService(journalRepository)
 	journalHdlr := journalHandler.NewHandler(journalSvc, workspaceSvc, responder, validate)
 
+	projectRepository := projectRepo.NewRepository(db)
+	projectSvc := projectService.NewService(projectRepository, workspaceSvc)
+	projectHdlr := projectHandler.NewHandler(projectSvc, responder, validate)
+
 	// Logger
 	loggerHdlr := loggerHandler.NewHandler(logService, responder, validate)
 
@@ -116,7 +132,9 @@ func NewContainer(db *sql.DB, cfg *config.Config) *Container {
 		WorkspaceHandler: workspaceHdlr,
 		WorkspaceService: workspaceSvc,
 		MasterHandler:    masterHdlr,
+		CrmHandler:       crmHdlr,
 		NotesHandler:     notesHdlr,
+		ProjectHandler:   projectHdlr,
 		HabitsHandler:    habitsHdlr,
 		JournalHandler:   journalHdlr,
 		LoggerHandler:    loggerHdlr,
@@ -154,6 +172,8 @@ func (c *Container) RegisterRoutes(r *router.Router) {
 	c.WorkspaceHandler.RegisterRoutes(workspaceGroup)
 	wsIDGroup := workspaceGroup.Group("/:workspaceId")
 	c.MasterHandler.RegisterRoutes(wsIDGroup)
+	c.ProjectHandler.RegisterRoutes(wsIDGroup)
+	c.CrmHandler.RegisterRoutes(wsIDGroup)
 	c.NotesHandler.RegisterRoutes(wsIDGroup)
 	c.HabitsHandler.RegisterRoutes(wsIDGroup)
 	c.JournalHandler.RegisterRoutes(wsIDGroup)

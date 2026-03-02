@@ -397,7 +397,7 @@ func (r *Repository) ListAllModules(ctx context.Context) ([]model.Module, error)
 // ListWorkspaceModules возвращает модули, включённые в workspace (join с modules для code).
 func (r *Repository) ListWorkspaceModules(ctx context.Context, workspaceID uuid.UUID) ([]model.WorkspaceModuleInfo, error) {
 	query := `
-		SELECT wm.id, wm.workspace_id, wm.module_id, m.code, wm.status, wm.settings, wm.created_at
+		SELECT wm.id, wm.workspace_id, wm.module_id, m.code, wm.status, wm.settings, wm.created_at, m.is_core
 		FROM workspace_modules wm
 		INNER JOIN modules m ON m.id = wm.module_id
 		WHERE wm.workspace_id = $1
@@ -423,6 +423,7 @@ func (r *Repository) ListWorkspaceModules(ctx context.Context, workspaceID uuid.
 			&info.Status,
 			&settings,
 			&createdAt,
+			&info.IsCore,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan workspace module: %w", err)
@@ -446,7 +447,7 @@ func (r *Repository) ListWorkspaceModules(ctx context.Context, workspaceID uuid.
 // Нужно для фронта: показать и доступные, и недоступные (заглушки) с возможностью включить.
 func (r *Repository) ListAllModulesWithWorkspaceState(ctx context.Context, workspaceID uuid.UUID) ([]model.WorkspaceModuleInfo, error) {
 	query := `
-		SELECT m.id AS module_id, m.code, m.name,
+		SELECT m.id AS module_id, m.code, m.name, m.is_core,
 		       wm.id AS wm_id, wm.workspace_id, wm.status, wm.settings, wm.created_at
 		FROM modules m
 		LEFT JOIN workspace_modules wm ON wm.module_id = m.id AND wm.workspace_id = $1
@@ -462,17 +463,19 @@ func (r *Repository) ListAllModulesWithWorkspaceState(ctx context.Context, works
 	for rows.Next() {
 		var info model.WorkspaceModuleInfo
 		var moduleID, code, name string
+		var isCore bool
 		var wmID, wmWorkspaceID sql.NullString
 		var status sql.NullString
 		var settings []byte
 		var createdAt sql.NullTime
 
-		err := rows.Scan(&moduleID, &code, &name, &wmID, &wmWorkspaceID, &status, &settings, &createdAt)
+		err := rows.Scan(&moduleID, &code, &name, &isCore, &wmID, &wmWorkspaceID, &status, &settings, &createdAt)
 		if err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
 		info.ModuleID = moduleID
 		info.ModuleName = code
+		info.IsCore = isCore
 		if wmID.Valid {
 			info.ID = wmID.String
 		}

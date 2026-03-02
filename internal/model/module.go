@@ -34,8 +34,9 @@ type WorkspaceModule struct {
 
 // Коды модулей (совпадают с modules.code в БД).
 const (
-	ModuleCodeHabits = "habits"
-	ModuleCodeCRM   = "crm"
+	ModuleCodeHabits   = "habits"
+	ModuleCodeCRM     = "crm"
+	ModuleCodeProjects = "projects"
 )
 
 // WorkspaceModuleInfo — ответ API для списка модулей workspace (для фронта).
@@ -43,7 +44,8 @@ type WorkspaceModuleInfo struct {
 	ID          string `json:"id"`
 	WorkspaceID string `json:"workspaceId"`
 	ModuleID    string `json:"moduleId"`
-	ModuleName  string `json:"moduleName"` // code из modules (habits, crm)
+	ModuleName  string `json:"moduleName"` // code из modules (habits, crm, projects)
+	IsCore      bool   `json:"isCore"`     // признак core-модуля (доступен бесплатно по умолчанию)
 	Status      string `json:"status"`
 	Enabled     bool   `json:"enabled"` // true если status == active
 	Settings    any    `json:"config,omitempty"`
