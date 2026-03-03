@@ -13,18 +13,18 @@ import (
 )
 
 type DealListOpts struct {
-	Page        int
-	Limit       int
-	PipelineID  string
-	StageID     string
-	CompanyID   string
-	ContactID   string
-	OwnerID     string
-	Status      string
-	DateFrom    string
-	DateTo      string
-	SortBy      string
-	SortOrder   string
+	Page       int
+	Limit      int
+	PipelineID string
+	StageID    string
+	CompanyID  string
+	ContactID  string
+	OwnerID    string
+	Status     string
+	DateFrom   string
+	DateTo     string
+	SortBy     string
+	SortOrder  string
 }
 
 func (r *Repository) DealList(ctx context.Context, workspaceID uuid.UUID, opts DealListOpts) ([]model.Deal, int, error) {
@@ -243,6 +243,7 @@ func (r *Repository) DealUpdate(ctx context.Context, workspaceID string, d *mode
 	id, _ := uuid.Parse(d.ID)
 	wsID, _ := uuid.Parse(workspaceID)
 	stageID, _ := uuid.Parse(d.StageID)
+	pipelineID, _ := uuid.Parse(d.PipelineID)
 	var contactID, companyID, expectedClose, actualClose, lostReason, description, source interface{}
 	if d.ContactID != "" {
 		contactID, _ = uuid.Parse(d.ContactID)
@@ -269,8 +270,8 @@ func (r *Repository) DealUpdate(ctx context.Context, workspaceID string, d *mode
 	if d.Probability != nil {
 		prob = *d.Probability
 	}
-	res, err := r.db.ExecContext(ctx, `UPDATE crm_deals SET name=$3, contact_id=$4, company_id=$5, budget=$6, currency=$7, stage_id=$8, expected_close_date=$9, actual_close_date=$10, status=$11, lost_reason=$12, description=$13, source=$14, probability=$15, tags=$16, owner_id=$17, updated_at=NOW() WHERE id=$1 AND workspace_id=$2`,
-		id, wsID, d.Name, contactID, companyID, d.Budget, d.Currency, stageID, expectedClose, actualClose, d.Status, lostReason, description, source, prob, pq.Array(d.Tags), d.OwnerID)
+	res, err := r.db.ExecContext(ctx, `UPDATE crm_deals SET name=$3, contact_id=$4, company_id=$5, budget=$6, currency=$7, pipeline_id=$8, stage_id=$9, expected_close_date=$10, actual_close_date=$11, status=$12, lost_reason=$13, description=$14, source=$15, probability=$16, tags=$17, owner_id=$18, updated_at=NOW() WHERE id=$1 AND workspace_id=$2`,
+		id, wsID, d.Name, contactID, companyID, d.Budget, d.Currency, pipelineID, stageID, expectedClose, actualClose, d.Status, lostReason, description, source, prob, pq.Array(d.Tags), d.OwnerID)
 	if err != nil {
 		return err
 	}

@@ -20,10 +20,10 @@ import (
 )
 
 type Handler struct {
-	svc      *crmService.Service
-	wsSvc    *workspaceService.Service
+	svc       *crmService.Service
+	wsSvc     *workspaceService.Service
 	responder *response.Responder
-	validate *validator.Validate
+	validate  *validator.Validate
 }
 
 func NewHandler(svc *crmService.Service, wsSvc *workspaceService.Service, responder *response.Responder, validate *validator.Validate) *Handler {
@@ -72,6 +72,16 @@ func (h *Handler) RegisterRoutes(r *gin.RouterGroup) {
 
 	r.GET("/pipelines", h.PipelineList)
 	r.POST("/pipelines", h.PipelineCreate)
+	r.GET("/pipelines/:pipelineId", h.PipelineGet)
+	r.PUT("/pipelines/:pipelineId", h.PipelineUpdate)
+	r.DELETE("/pipelines/:pipelineId", h.PipelineDelete)
+
+	r.GET("/pipelines/:pipelineId/stages", h.StageList)
+	r.GET("/pipelines/:pipelineId/stages/:id", h.StageGet)
+	r.POST("/pipelines/:pipelineId/stages", h.StageCreate)
+	r.PUT("/pipelines/:pipelineId/stages/:id", h.StageUpdate)
+	r.DELETE("/pipelines/:pipelineId/stages/:id", h.StageDelete)
+	r.POST("/pipelines/:pipelineId/stages/reorder", h.StageReorder)
 
 	r.GET("/deals", h.DealList)
 	r.GET("/deals/:id", h.DealGet)
@@ -463,6 +473,239 @@ func (h *Handler) PipelineCreate(c *gin.Context) {
 		return
 	}
 	h.responder.Created(c, "", req)
+}
+
+func (h *Handler) PipelineGet(c *gin.Context) {
+	workspaceID, _, ok := h.requireWorkspaceAccess(c)
+	if !ok {
+		return
+	}
+	pipelineID := c.Param("pipelineId")
+	p, err := h.svc.PipelineGet(c.Request.Context(), workspaceID, pipelineID)
+	if err != nil {
+		h.responder.InternalServerError(c, "Failed to get pipeline")
+		return
+	}
+	if p == nil {
+		h.responder.NotFound(c, "Pipeline not found")
+		return
+	}
+	h.responder.SuccessWithData(c, p)
+}
+
+func (h *Handler) PipelineUpdate(c *gin.Context) {
+	workspaceID, _, ok := h.requireWorkspaceAccess(c)
+	if !ok {
+		return
+	}
+	pipelineID := c.Param("pipelineId")
+	existing, err := h.svc.PipelineGet(c.Request.Context(), workspaceID, pipelineID)
+	if err != nil || existing == nil {
+		h.responder.NotFound(c, "Pipeline not found")
+		return
+	}
+	var req model.Pipeline
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.responder.BadRequest(c, "Invalid request body")
+		return
+	}
+	mergePipeline(existing, &req)
+	existing.ID = pipelineID
+	if err := h.svc.PipelineUpdate(c.Request.Context(), workspaceID, existing); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			h.responder.NotFound(c, "Pipeline not found")
+			return
+		}
+		h.responder.InternalServerError(c, "Failed to update pipeline")
+		return
+	}
+	updated, _ := h.svc.PipelineGet(c.Request.Context(), workspaceID, pipelineID)
+	h.responder.SuccessWithData(c, updated)
+}
+
+func mergePipeline(dst, src *model.Pipeline) {
+	if src.Name != "" {
+		dst.Name = src.Name
+	}
+	// zero-value bool is false; we want ability to set default flag explicitly.
+	// Здесь предполагаем, что фронт отправляет isDefault всегда.
+	dst.IsDefault = src.IsDefault
+	if src.Stages != nil && len(src.Stages) > 0 {
+		dst.Stages = src.Stages
+	}
+}
+
+func (h *Handler) PipelineDelete(c *gin.Context) {
+	workspaceID, _, ok := h.requireWorkspaceAccess(c)
+	if !ok {
+		return
+	}
+	pipelineID := c.Param("pipelineId")
+	if err := h.svc.PipelineDelete(c.Request.Context(), workspaceID, pipelineID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			h.responder.NotFound(c, "Pipeline not found")
+			return
+		}
+		h.responder.InternalServerError(c, "Failed to delete pipeline")
+		return
+	}
+	c.AbortWithStatus(http.StatusNoContent)
+}
+
+// Stages
+
+func (h *Handler) StageList(c *gin.Context) {
+	workspaceID, _, ok := h.requireWorkspaceAccess(c)
+	if !ok {
+		return
+	}
+	pipelineID := c.Param("pipelineId")
+	stages, err := h.svc.StageList(c.Request.Context(), workspaceID, pipelineID)
+	if err != nil {
+		h.responder.InternalServerError(c, "Failed to list stages")
+		return
+	}
+	if stages == nil {
+		h.responder.NotFound(c, "Pipeline not found")
+		return
+	}
+	h.responder.SuccessWithData(c, gin.H{"stages": stages})
+}
+
+func (h *Handler) StageGet(c *gin.Context) {
+	workspaceID, _, ok := h.requireWorkspaceAccess(c)
+	if !ok {
+		return
+	}
+	pipelineID := c.Param("pipelineId")
+	id := c.Param("id")
+	stage, err := h.svc.StageGet(c.Request.Context(), workspaceID, pipelineID, id)
+	if err != nil {
+		h.responder.InternalServerError(c, "Failed to get stage")
+		return
+	}
+	if stage == nil {
+		h.responder.NotFound(c, "Stage not found")
+		return
+	}
+	h.responder.SuccessWithData(c, stage)
+}
+
+func (h *Handler) StageCreate(c *gin.Context) {
+	workspaceID, _, ok := h.requireWorkspaceAccess(c)
+	if !ok {
+		return
+	}
+	pipelineID := c.Param("pipelineId")
+	var req model.Stage
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.responder.BadRequest(c, "Invalid request body")
+		return
+	}
+	if req.Name == "" {
+		h.responder.BadRequest(c, "name is required")
+		return
+	}
+	if err := h.svc.StageCreate(c.Request.Context(), workspaceID, pipelineID, &req); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			h.responder.NotFound(c, "Pipeline not found")
+			return
+		}
+		h.responder.InternalServerError(c, "Failed to create stage")
+		return
+	}
+	h.responder.Created(c, "", req)
+}
+
+func (h *Handler) StageUpdate(c *gin.Context) {
+	workspaceID, _, ok := h.requireWorkspaceAccess(c)
+	if !ok {
+		return
+	}
+	pipelineID := c.Param("pipelineId")
+	id := c.Param("id")
+	existing, err := h.svc.StageGet(c.Request.Context(), workspaceID, pipelineID, id)
+	if err != nil || existing == nil {
+		h.responder.NotFound(c, "Stage not found")
+		return
+	}
+	var req model.Stage
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.responder.BadRequest(c, "Invalid request body")
+		return
+	}
+	mergeStage(existing, &req)
+	if err := h.svc.StageUpdate(c.Request.Context(), workspaceID, pipelineID, id, existing); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			h.responder.NotFound(c, "Stage not found")
+			return
+		}
+		h.responder.InternalServerError(c, "Failed to update stage")
+		return
+	}
+	updated, _ := h.svc.StageGet(c.Request.Context(), workspaceID, pipelineID, id)
+	h.responder.SuccessWithData(c, updated)
+}
+
+func mergeStage(dst, src *model.Stage) {
+	if src.Name != "" {
+		dst.Name = src.Name
+	}
+	if src.Color != "" {
+		dst.Color = src.Color
+	}
+	if src.Probability != 0 {
+		dst.Probability = src.Probability
+	}
+	// boolean flags: предполагаем, что фронт всегда шлёт оба поля
+	dst.IsFinal = src.IsFinal
+	dst.IsLost = src.IsLost
+}
+
+func (h *Handler) StageDelete(c *gin.Context) {
+	workspaceID, _, ok := h.requireWorkspaceAccess(c)
+	if !ok {
+		return
+	}
+	pipelineID := c.Param("pipelineId")
+	id := c.Param("id")
+	if err := h.svc.StageDelete(c.Request.Context(), workspaceID, pipelineID, id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			h.responder.NotFound(c, "Stage not found")
+			return
+		}
+		h.responder.InternalServerError(c, "Failed to delete stage")
+		return
+	}
+	c.AbortWithStatus(http.StatusNoContent)
+}
+
+func (h *Handler) StageReorder(c *gin.Context) {
+	workspaceID, _, ok := h.requireWorkspaceAccess(c)
+	if !ok {
+		return
+	}
+	pipelineID := c.Param("pipelineId")
+	var body struct {
+		StageIDs []string `json:"stageIds"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		h.responder.BadRequest(c, "Invalid request body")
+		return
+	}
+	if len(body.StageIDs) == 0 {
+		h.responder.BadRequest(c, "stageIds is required")
+		return
+	}
+	if err := h.svc.StageReorder(c.Request.Context(), workspaceID, pipelineID, body.StageIDs); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			h.responder.NotFound(c, "Pipeline not found")
+			return
+		}
+		h.responder.InternalServerError(c, "Failed to reorder stages")
+		return
+	}
+	h.responder.SuccessWithData(c, gin.H{})
 }
 
 // Deals

@@ -2,6 +2,7 @@ package crm
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 
 	"backend/internal/model"
@@ -15,10 +16,10 @@ import (
 const systemUserID = "00000000-0000-0000-0000-000000000001"
 
 var (
-	ErrContactHasDeals   = errors.New("contact has linked deals")
-	ErrCompanyHasDeals   = errors.New("company has linked deals or contacts")
-	ErrActivityNotNote   = errors.New("cannot update or delete non-note activity")
-	ErrEntityNotFound    = errors.New("entity not found")
+	ErrContactHasDeals = errors.New("contact has linked deals")
+	ErrCompanyHasDeals = errors.New("company has linked deals or contacts")
+	ErrActivityNotNote = errors.New("cannot update or delete non-note activity")
+	ErrEntityNotFound  = errors.New("entity not found")
 )
 
 type Service struct {
@@ -200,6 +201,173 @@ func (s *Service) PipelineCreate(ctx context.Context, workspaceID string, p *mod
 	return s.repo.PipelineCreate(ctx, workspaceID, p, userID)
 }
 
+func (s *Service) PipelineGet(ctx context.Context, workspaceID, id string) (*model.Pipeline, error) {
+	wsID, err := uuid.Parse(workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	pid, err := uuid.Parse(id)
+	if err != nil {
+		return nil, err
+	}
+	return s.repo.PipelineGetByID(ctx, pid, wsID)
+}
+
+func (s *Service) PipelineUpdate(ctx context.Context, workspaceID string, p *model.Pipeline) error {
+	wsID, err := uuid.Parse(workspaceID)
+	if err != nil {
+		return err
+	}
+	pid, err := uuid.Parse(p.ID)
+	if err != nil {
+		return err
+	}
+	return s.repo.PipelineUpdate(ctx, wsID, pid, p)
+}
+
+func (s *Service) PipelineDelete(ctx context.Context, workspaceID, id string) error {
+	wsID, err := uuid.Parse(workspaceID)
+	if err != nil {
+		return err
+	}
+	pid, err := uuid.Parse(id)
+	if err != nil {
+		return err
+	}
+	return s.repo.PipelineDelete(ctx, wsID, pid)
+}
+
+func (s *Service) StageList(ctx context.Context, workspaceID, pipelineID string) ([]model.Stage, error) {
+	wsID, err := uuid.Parse(workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	pid, err := uuid.Parse(pipelineID)
+	if err != nil {
+		return nil, err
+	}
+	p, err := s.repo.PipelineGetByID(ctx, pid, wsID)
+	if err != nil {
+		return nil, err
+	}
+	if p == nil {
+		return nil, nil
+	}
+	return p.Stages, nil
+}
+
+func (s *Service) StageGet(ctx context.Context, workspaceID, pipelineID, stageID string) (*model.Stage, error) {
+	stages, err := s.StageList(ctx, workspaceID, pipelineID)
+	if err != nil {
+		return nil, err
+	}
+	if stages == nil {
+		return nil, nil
+	}
+	for i := range stages {
+		if stages[i].ID == stageID {
+			return &stages[i], nil
+		}
+	}
+	return nil, nil
+}
+
+func (s *Service) StageCreate(ctx context.Context, workspaceID, pipelineID string, st *model.Stage) error {
+	wsID, err := uuid.Parse(workspaceID)
+	if err != nil {
+		return err
+	}
+	pid, err := uuid.Parse(pipelineID)
+	if err != nil {
+		return err
+	}
+	// ensure pipeline belongs to workspace
+	p, err := s.repo.PipelineGetByID(ctx, pid, wsID)
+	if err != nil {
+		return err
+	}
+	if p == nil {
+		return sql.ErrNoRows
+	}
+	return s.repo.StageCreate(ctx, pid, st)
+}
+
+func (s *Service) StageUpdate(ctx context.Context, workspaceID, pipelineID, stageID string, st *model.Stage) error {
+	wsID, err := uuid.Parse(workspaceID)
+	if err != nil {
+		return err
+	}
+	pid, err := uuid.Parse(pipelineID)
+	if err != nil {
+		return err
+	}
+	// ensure pipeline belongs to workspace
+	p, err := s.repo.PipelineGetByID(ctx, pid, wsID)
+	if err != nil {
+		return err
+	}
+	if p == nil {
+		return sql.ErrNoRows
+	}
+	sid, err := uuid.Parse(stageID)
+	if err != nil {
+		return err
+	}
+	return s.repo.StageUpdate(ctx, pid, sid, st)
+}
+
+func (s *Service) StageDelete(ctx context.Context, workspaceID, pipelineID, stageID string) error {
+	wsID, err := uuid.Parse(workspaceID)
+	if err != nil {
+		return err
+	}
+	pid, err := uuid.Parse(pipelineID)
+	if err != nil {
+		return err
+	}
+	// ensure pipeline belongs to workspace
+	p, err := s.repo.PipelineGetByID(ctx, pid, wsID)
+	if err != nil {
+		return err
+	}
+	if p == nil {
+		return sql.ErrNoRows
+	}
+	sid, err := uuid.Parse(stageID)
+	if err != nil {
+		return err
+	}
+	return s.repo.StageDelete(ctx, pid, sid)
+}
+
+func (s *Service) StageReorder(ctx context.Context, workspaceID, pipelineID string, stageIDs []string) error {
+	wsID, err := uuid.Parse(workspaceID)
+	if err != nil {
+		return err
+	}
+	pid, err := uuid.Parse(pipelineID)
+	if err != nil {
+		return err
+	}
+	// ensure pipeline belongs to workspace
+	p, err := s.repo.PipelineGetByID(ctx, pid, wsID)
+	if err != nil {
+		return err
+	}
+	if p == nil {
+		return sql.ErrNoRows
+	}
+	ids := make([]uuid.UUID, 0, len(stageIDs))
+	for _, sidStr := range stageIDs {
+		sid, err := uuid.Parse(sidStr)
+		if err != nil {
+			return err
+		}
+		ids = append(ids, sid)
+	}
+	return s.repo.StageReorder(ctx, pid, ids)
+}
+
 func (s *Service) DealList(ctx context.Context, workspaceID string, opts crmRepo.DealListOpts) ([]model.Deal, int, error) {
 	wsID, err := uuid.Parse(workspaceID)
 	if err != nil {
@@ -269,9 +437,9 @@ func (s *Service) DealUpdate(ctx context.Context, workspaceID string, d *model.D
 		}
 		title := "Сделка перешла: " + fromName + " → " + toName
 		meta := map[string]interface{}{
-			"fromStage":  map[string]interface{}{"id": oldDeal.StageID, "name": fromName},
-			"toStage":    map[string]interface{}{"id": d.StageID, "name": toName},
-			"dealValue":  d.Budget,
+			"fromStage": map[string]interface{}{"id": oldDeal.StageID, "name": fromName},
+			"toStage":   map[string]interface{}{"id": d.StageID, "name": toName},
+			"dealValue": d.Budget,
 		}
 		_ = s.CreateSystemActivity(ctx, workspaceID, &model.CrmActivity{
 			Type:       "deal_stage_changed",

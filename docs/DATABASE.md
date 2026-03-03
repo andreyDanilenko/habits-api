@@ -8,7 +8,7 @@ psql -U username -d dbname -h localhost -p 5432
 # В контейнере Docker
 docker exec -it postgres_container psql -U username -d dbname
 
-# С паролем
+# С паролемт
 docker exec -it postgres_container psql -U postgres -W
 
 # Через bash в контейнере, затем psql
