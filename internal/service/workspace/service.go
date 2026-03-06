@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"strings"
 
 	"backend/internal/model"
 	permService "backend/internal/service/permission"
@@ -436,8 +437,10 @@ func (s *Service) RemoveMember(ctx context.Context, workspaceID, userID, targetU
 	return nil
 }
 
-// UpdateMemberRole меняет системную роль участника. Только OWNER/ADMIN.
-func (s *Service) UpdateMemberRole(ctx context.Context, workspaceID, userID, targetUserID, newRole string, userRole model.UserRole) error {
+// UpdateMemberRole меняет роль участника. Только OWNER/ADMIN.
+// newRole — системная роль (OWNER/ADMIN/MEMBER/GUEST) или пусто, если используется roleID.
+// roleID — UUID кастомной роли (приоритет над newRole).
+func (s *Service) UpdateMemberRole(ctx context.Context, workspaceID, userID, targetUserID, newRole, roleID string, userRole model.UserRole) error {
 	wsID, err := uuid.Parse(workspaceID)
 	if err != nil {
 		return err
@@ -470,11 +473,40 @@ func (s *Service) UpdateMemberRole(ctx context.Context, workspaceID, userID, tar
 	if targetRole == "OWNER" && ownerCount <= 1 {
 		return ErrCannotChangeOwner
 	}
-	// Обновить user_workspaces.role
+
+	if roleID != "" {
+		// Кастомная роль: валидация и назначение
+		role, err := s.permSvc.GetRole(ctx, roleID)
+		if err != nil || role == nil {
+			return ErrMemberNotFound
+		}
+		if role.WorkspaceID != workspaceID {
+			return errors.New("role does not belong to this workspace")
+		}
+		if role.IsSystem {
+			return errors.New("cannot assign system role via roleId, use role parameter")
+		}
+		if err := s.repo.SetUserWorkspaceRole(ctx, wsID, targetUID, role.Name); err != nil {
+			return err
+		}
+		rolesFull, err := s.permSvc.GetUserRolesFull(ctx, targetUserID, workspaceID)
+		if err != nil {
+			return err
+		}
+		for _, r := range rolesFull {
+			_ = s.permSvc.RemoveRole(ctx, targetUserID, r.ID, workspaceID)
+		}
+		return s.permSvc.AssignRole(ctx, targetUserID, roleID, workspaceID, userID)
+	}
+
+	// Системная роль
+	newRole = strings.ToUpper(strings.TrimSpace(newRole))
+	if newRole != "OWNER" && newRole != "ADMIN" && newRole != "MEMBER" && newRole != "GUEST" {
+		return errors.New("invalid system role")
+	}
 	if err := s.repo.UpdateUserWorkspaceRole(ctx, wsID, targetUID, newRole); err != nil {
 		return err
 	}
-	// Снять старую системную роль и назначить новую (user_role_assignments + Casbin)
 	rolesFull, err := s.permSvc.GetUserRolesFull(ctx, targetUserID, workspaceID)
 	if err != nil {
 		return err

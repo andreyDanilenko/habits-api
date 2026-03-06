@@ -275,7 +275,8 @@ func (h *Handler) RemoveMember(c *gin.Context) {
 }
 
 type updateMemberRoleRequest struct {
-	Role string `json:"role" binding:"required"`
+	Role   string `json:"role"`   // OWNER, ADMIN, MEMBER, GUEST
+	RoleID string `json:"roleId"` // UUID кастомной роли (приоритет над role)
 }
 
 func (h *Handler) UpdateMemberRole(c *gin.Context) {
@@ -302,8 +303,12 @@ func (h *Handler) UpdateMemberRole(c *gin.Context) {
 		h.responder.BadRequest(c, "Invalid request body")
 		return
 	}
+	if req.Role == "" && req.RoleID == "" {
+		h.responder.BadRequest(c, "role or roleId is required")
+		return
+	}
 
-	err := h.service.UpdateMemberRole(c.Request.Context(), workspaceID, userID, targetUserID, req.Role, userRole)
+	err := h.service.UpdateMemberRole(c.Request.Context(), workspaceID, userID, targetUserID, req.Role, req.RoleID, userRole)
 	if err != nil {
 		switch err {
 		case workspaceService.ErrAccessDenied:
@@ -419,6 +424,12 @@ func (h *Handler) GetModules(c *gin.Context) {
 	workspaceID := c.Param("workspaceId")
 	if workspaceID == "" {
 		h.responder.BadRequest(c, "Workspace ID required")
+		return
+	}
+
+	// При отсутствии workspace:module:read PermissionMiddleware ставит флаг вместо 403.
+	if v, _ := c.Get(middleware.GinNoWorkspaceModuleReadKey); v == true {
+		h.responder.SuccessWithData(c, gin.H{"modules": []interface{}{}})
 		return
 	}
 

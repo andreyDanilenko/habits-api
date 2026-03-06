@@ -12,6 +12,15 @@ import (
 
 // scanHabits сканирует привычки из rows
 func scanHabits(rows *sql.Rows) ([]model.Habit, error) {
+	return scanHabitsWithOwnerOptional(rows, false)
+}
+
+// scanHabitsWithOwner сканирует привычки с owner_name (последняя колонка)
+func scanHabitsWithOwner(rows *sql.Rows) ([]model.Habit, error) {
+	return scanHabitsWithOwnerOptional(rows, true)
+}
+
+func scanHabitsWithOwnerOptional(rows *sql.Rows, withOwner bool) ([]model.Habit, error) {
 	var habits []model.Habit
 	for rows.Next() {
 		var habit model.Habit
@@ -20,26 +29,19 @@ func scanHabits(rows *sql.Rows) ([]model.Habit, error) {
 		var categoryPtr sql.NullString
 		var oneTimeDatePtr sql.NullTime
 		var recurringDaysArray pq.Int32Array
+		var ownerName sql.NullString
 
-		err := rows.Scan(
-			&habit.ID,
-			&habit.Title,
-			&habit.Description,
-			&habit.Color,
-			&habit.Icon,
-			&habit.TargetDays,
-			&habit.DailyGoal,
-			&preferredTimePtr,
-			&categoryPtr,
-			&habit.ScheduleType,
-			&recurringDaysArray,
-			&oneTimeDatePtr,
-			&habit.IsActive,
-			&habit.UserID,
-			&habit.WorkspaceID,
-			&createdAt,
-			&updatedAt,
-		)
+		scanArgs := []interface{}{
+			&habit.ID, &habit.Title, &habit.Description, &habit.Color, &habit.Icon,
+			&habit.TargetDays, &habit.DailyGoal, &preferredTimePtr, &categoryPtr,
+			&habit.ScheduleType, &recurringDaysArray, &oneTimeDatePtr, &habit.IsActive,
+			&habit.UserID, &habit.WorkspaceID, &createdAt, &updatedAt,
+		}
+		if withOwner {
+			scanArgs = append(scanArgs, &ownerName)
+		}
+
+		err := rows.Scan(scanArgs...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan habit: %w", err)
 		}
@@ -52,6 +54,9 @@ func scanHabits(rows *sql.Rows) ([]model.Habit, error) {
 		}
 		if oneTimeDatePtr.Valid {
 			habit.OneTimeDate = oneTimeDatePtr.Time.Format("2006-01-02")
+		}
+		if ownerName.Valid {
+			habit.OwnerName = ownerName.String
 		}
 		habit.RecurringDays = ConvertRecurringDays(recurringDaysArray)
 		habit.CreatedAt = createdAt.Format(time.RFC3339)

@@ -508,7 +508,7 @@ func (r *Repository) ListAllModulesWithWorkspaceState(ctx context.Context, works
 func (r *Repository) ListMembers(ctx context.Context, workspaceID uuid.UUID) ([]model.WorkspaceMember, error) {
 	query := `
 		SELECT u.id, u.email, COALESCE(u.name, '') AS name,
-		       UPPER(TRIM(uw.role)) AS system_role,
+		       TRIM(uw.role) AS system_role,
 		       uw.created_at
 		FROM user_workspaces uw
 		JOIN users u ON u.id = uw.user_id
@@ -536,11 +536,12 @@ func (r *Repository) ListMembers(ctx context.Context, workspaceID uuid.UUID) ([]
 		if err != nil {
 			return nil, fmt.Errorf("scan member: %w", err)
 		}
-		switch role {
+		roleUpper := strings.ToUpper(role)
+		switch roleUpper {
 		case "OWNER", "ADMIN", "MEMBER", "GUEST":
-			m.SystemRole = role
+			m.SystemRole = roleUpper
 		default:
-			m.SystemRole = "MEMBER"
+			m.SystemRole = role // кастомная роль — сохраняем имя как есть
 		}
 		m.JoinedAt = createdAt.Format(time.RFC3339)
 		list = append(list, m)
@@ -574,12 +575,26 @@ func (r *Repository) RemoveMember(ctx context.Context, workspaceID, userID uuid.
 	return nil
 }
 
-// UpdateUserWorkspaceRole обновляет роль участника в user_workspaces.
+// UpdateUserWorkspaceRole обновляет роль участника в user_workspaces (системная роль).
 func (r *Repository) UpdateUserWorkspaceRole(ctx context.Context, workspaceID, userID uuid.UUID, role string) error {
 	role = strings.ToUpper(strings.TrimSpace(role))
 	if role != "OWNER" && role != "ADMIN" && role != "MEMBER" && role != "GUEST" {
 		return fmt.Errorf("invalid system role: %s", role)
 	}
+	return r.setUserWorkspaceRole(ctx, workspaceID, userID, role)
+}
+
+// SetUserWorkspaceRole устанавливает роль участника (системная или кастомная по имени).
+// Валидация — в сервисе.
+func (r *Repository) SetUserWorkspaceRole(ctx context.Context, workspaceID, userID uuid.UUID, roleName string) error {
+	roleName = strings.TrimSpace(roleName)
+	if roleName == "" {
+		return fmt.Errorf("role name cannot be empty")
+	}
+	return r.setUserWorkspaceRole(ctx, workspaceID, userID, roleName)
+}
+
+func (r *Repository) setUserWorkspaceRole(ctx context.Context, workspaceID, userID uuid.UUID, role string) error {
 	res, err := r.db.ExecContext(ctx,
 		`UPDATE user_workspaces SET role = $3 WHERE workspace_id = $1 AND user_id = $2`,
 		workspaceID, userID, role,

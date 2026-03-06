@@ -94,7 +94,7 @@ func NewContainer(db *sql.DB, gormDB *gorm.DB, cfg *config.Config) (*Container, 
 	if err != nil {
 		return nil, err
 	}
-	permSvc := permissionService.NewService(permissionRepository, enforcer)
+	permSvc := permissionService.NewService(permissionRepository, enforcer, workspaceRepository)
 	workspaceSvc := workspaceService.NewService(workspaceRepository, userPrefsRepository, licenseRepository, permSvc)
 
 	// Auth
@@ -124,12 +124,12 @@ func NewContainer(db *sql.DB, gormDB *gorm.DB, cfg *config.Config) (*Container, 
 
 	// Habits
 	habitsRepository := habitsRepo.NewRepository(db)
-	habitsSvc := habitsService.NewService(habitsRepository)
+	habitsSvc := habitsService.NewService(habitsRepository, workspaceRepository)
 	habitsHdlr := habitsHandler.NewHandler(habitsSvc, responder, validate)
 
 	// Journal
 	journalRepository := journalRepo.NewRepository(db)
-	journalSvc := journalService.NewService(journalRepository)
+	journalSvc := journalService.NewService(journalRepository, habitsRepository)
 	journalHdlr := journalHandler.NewHandler(journalSvc, workspaceSvc, responder, validate)
 
 	projectRepository := projectRepo.NewRepository(db)

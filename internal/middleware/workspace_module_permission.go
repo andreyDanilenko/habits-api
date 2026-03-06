@@ -21,6 +21,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// GinNoWorkspaceModuleReadKey — при отсутствии workspace:module:read для GET /modules
+// middleware не возвращает 403, а устанавливает этот флаг; хендлер отвечает { modules: [] }.
+const GinNoWorkspaceModuleReadKey = "no_workspace_module_read"
+
 // WorkspaceMiddleware извлекает workspaceId из URL, проверяет членство пользователя и кладёт workspace_id в контекст Gin.
 func WorkspacePathMiddleware(workspaceService *workspace.Service, responder *response.Responder) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -213,6 +217,13 @@ func PermissionMiddleware(enforcer *casbin.Enforcer, permSvc *permissionService.
 		}
 
 		if !allowed {
+			// GET /modules: при отсутствии workspace:module:read возвращаем пустой массив, а не 403.
+			// Хендлер проверяет GinNoWorkspaceModuleReadKey и отвечает { modules: [] }.
+			if obj == "workspace:module" && act == "read" && method == http.MethodGet {
+				c.Set(GinNoWorkspaceModuleReadKey, true)
+				c.Next()
+				return
+			}
 			responder.Forbidden(c, "Insufficient permissions")
 			c.Abort()
 			return
@@ -251,6 +262,7 @@ var endpointPermissionTable = []endpointPermissionRule{
 	// Workspace-админка (участники, модули, роли)
 	{"/members", true, []string{http.MethodGet, http.MethodPost}, "workspace:member", "invite"},
 	{"/members", true, []string{http.MethodDelete}, "workspace:member", "remove"},
+	{"/permissions/system-roles", true, []string{http.MethodGet}, "workspace:module", "read"},
 	{"/modules", true, []string{http.MethodGet}, "workspace:module", "read"},   // GUEST может просматривать список модулей
 	{"/modules", true, []string{http.MethodPost, http.MethodDelete}, "workspace:module", "manage"},
 	{"/roles", true, []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete}, "workspace:role", "manage"},
@@ -268,6 +280,7 @@ var endpointPermissionTable = []endpointPermissionRule{
 	{"/crm/companies", false, []string{http.MethodPut, http.MethodPatch}, "crm:company", "update"},
 	{"/crm/companies", false, []string{http.MethodDelete}, "crm:company", "delete"},
 	// Habits
+	{"/habits/activities", false, []string{http.MethodGet}, "habits:habit", "read"},
 	{"/habits/habits", false, []string{http.MethodGet}, "habits:habit", "read"},
 	{"/habits/habits", false, []string{http.MethodPost}, "habits:habit", "create"},
 	{"/habits/habits", false, []string{http.MethodPut, http.MethodPatch}, "habits:habit", "update"},

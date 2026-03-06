@@ -5,17 +5,19 @@ import (
 	"time"
 
 	"backend/internal/model"
+	habitsRepo "backend/internal/repository/habits"
 	journalRepo "backend/internal/repository/journal"
 
 	"github.com/google/uuid"
 )
 
 type Service struct {
-	repo *journalRepo.Repository
+	repo       *journalRepo.Repository
+	activityRepo *habitsRepo.Repository
 }
 
-func NewService(repo *journalRepo.Repository) *Service {
-	return &Service{repo: repo}
+func NewService(repo *journalRepo.Repository, activityRepo *habitsRepo.Repository) *Service {
+	return &Service{repo: repo, activityRepo: activityRepo}
 }
 
 func (s *Service) List(ctx context.Context, workspaceID string, date *time.Time) ([]model.JournalEntry, error) {
@@ -60,6 +62,11 @@ func (s *Service) Create(ctx context.Context, workspaceID, userID string, dto mo
 	if err := s.repo.Create(ctx, e); err != nil {
 		return nil, err
 	}
+	uid, _ := uuid.Parse(e.UserID)
+	wsID, _ := uuid.Parse(e.WorkspaceID)
+	entryID, _ := uuid.Parse(e.ID)
+	_ = s.activityRepo.CreateJournalActivity(ctx, uid, wsID, entryID,
+		habitsRepo.ActivityTypeJournalCreated, "Добавлена запись в дневник", "📝")
 	return e, nil
 }
 
@@ -89,6 +96,11 @@ func (s *Service) Update(ctx context.Context, workspaceID, entryID string, dto m
 	if err := s.repo.Update(ctx, existing); err != nil {
 		return nil, err
 	}
+	uid, _ := uuid.Parse(existing.UserID)
+	wsID, _ := uuid.Parse(existing.WorkspaceID)
+	entryUUID, _ := uuid.Parse(existing.ID)
+	_ = s.activityRepo.CreateJournalActivity(ctx, uid, wsID, entryUUID,
+		habitsRepo.ActivityTypeJournalUpdated, "Обновлена запись в дневнике", "✏️")
 	return existing, nil
 }
 
@@ -101,5 +113,14 @@ func (s *Service) Delete(ctx context.Context, workspaceID, entryID string) error
 	if err != nil {
 		return err
 	}
-	return s.repo.Delete(ctx, id, wsID)
+	entry, _ := s.repo.Get(ctx, id, wsID)
+	if err := s.repo.Delete(ctx, id, wsID); err != nil {
+		return err
+	}
+	if entry != nil {
+		uid, _ := uuid.Parse(entry.UserID)
+		_ = s.activityRepo.CreateJournalActivity(ctx, uid, wsID, id,
+			habitsRepo.ActivityTypeJournalDeleted, "Удалена запись из дневника", "🗑️")
+	}
+	return nil
 }

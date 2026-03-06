@@ -23,6 +23,7 @@ func NewHandler(service *permService.Service, responder *response.Responder, val
 
 func (h *Handler) RegisterRoutes(r *gin.RouterGroup) {
 	r.GET("/permissions/catalog", h.GetCatalog)
+	r.GET("/permissions/system-roles", h.GetSystemRolePermissions)
 	r.GET("/roles", h.ListRoles)
 	r.POST("/roles", h.CreateRole)
 	r.GET("/roles/:roleId", h.GetRole)
@@ -55,6 +56,12 @@ func (h *Handler) GetCatalog(c *gin.Context) {
 		modules[p.ModuleCode][p.EntityType] = append(modules[p.ModuleCode][p.EntityType], p)
 	}
 	h.responder.SuccessWithData(c, gin.H{"modules": modules, "catalog": catalog})
+}
+
+// GetSystemRolePermissions GET /workspaces/:workspaceId/permissions/system-roles
+func (h *Handler) GetSystemRolePermissions(c *gin.Context) {
+	perms := h.service.GetSystemRolePermissions(c.Request.Context())
+	h.responder.SuccessWithData(c, gin.H{"systemRoles": perms})
 }
 
 // ListRoles GET /workspaces/:workspaceId/roles
@@ -130,10 +137,6 @@ func (h *Handler) UpdateRole(c *gin.Context) {
 			h.responder.Forbidden(c, err.Error())
 			return
 		}
-		if err == permService.ErrRoleHasUsers {
-			h.responder.BadRequest(c, err.Error())
-			return
-		}
 		h.responder.InternalServerError(c, "Failed to update role")
 		return
 	}
@@ -143,15 +146,17 @@ func (h *Handler) UpdateRole(c *gin.Context) {
 
 // DeleteRole DELETE /workspaces/:workspaceId/roles/:roleId
 func (h *Handler) DeleteRole(c *gin.Context) {
+	workspaceID := c.Param("workspaceId")
 	roleID := c.Param("roleId")
-	err := h.service.DeleteRole(c.Request.Context(), roleID)
+	userID, _ := middleware.GetUserIDFromGin(c)
+	assignedBy := ""
+	if userID != "" {
+		assignedBy = userID
+	}
+	err := h.service.DeleteRole(c.Request.Context(), workspaceID, roleID, assignedBy)
 	if err != nil {
 		if err == permService.ErrRoleSystem {
 			h.responder.Forbidden(c, err.Error())
-			return
-		}
-		if err == permService.ErrRoleHasUsers {
-			h.responder.BadRequest(c, err.Error())
 			return
 		}
 		h.responder.NotFound(c, "Role not found")
@@ -343,6 +348,7 @@ func (h *Handler) GetMyPermissions(c *gin.Context) {
 }
 
 // pickSystemRole возвращает приоритетную роль workspace (OWNER > ADMIN > MEMBER > GUEST).
+// Если только кастомные роли — возвращает первую кастомную роль по имени.
 func pickSystemRole(roles []string) string {
 	for _, r := range []string{"OWNER", "ADMIN", "MEMBER", "GUEST"} {
 		for _, role := range roles {
@@ -350,6 +356,9 @@ func pickSystemRole(roles []string) string {
 				return r
 			}
 		}
+	}
+	if len(roles) > 0 {
+		return roles[0] // кастомная роль
 	}
 	return ""
 }
