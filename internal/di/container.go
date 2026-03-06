@@ -1,6 +1,7 @@
 package di
 
 import (
+	"backend/internal/authz"
 	"backend/internal/config"
 	adminHandler "backend/internal/handler/admin"
 	authHandler "backend/internal/handler/auth"
@@ -10,6 +11,7 @@ import (
 	loggerHandler "backend/internal/handler/logger"
 	masterHandler "backend/internal/handler/master"
 	notesHandler "backend/internal/handler/notes"
+	permissionHandler "backend/internal/handler/permission"
 	projectHandler "backend/internal/handler/project"
 	swaggerHandler "backend/internal/handler/swagger"
 	workspaceHandler "backend/internal/handler/workspace"
@@ -21,6 +23,7 @@ import (
 	loggerRepo "backend/internal/repository/logger"
 	masterRepo "backend/internal/repository/master"
 	notesRepo "backend/internal/repository/notes"
+	permissionRepo "backend/internal/repository/permission"
 	projectRepo "backend/internal/repository/project"
 	userRepo "backend/internal/repository/user"
 	userPrefsRepo "backend/internal/repository/user_preferences"
@@ -33,6 +36,7 @@ import (
 	loggerService "backend/internal/service/logger"
 	masterService "backend/internal/service/master"
 	notesService "backend/internal/service/notes"
+	permissionService "backend/internal/service/permission"
 	projectService "backend/internal/service/project"
 	workspaceService "backend/internal/service/workspace"
 	"backend/pkg/auth/token"
@@ -40,9 +44,12 @@ import (
 	"backend/pkg/response"
 	"database/sql"
 	"net/http"
+	"time"
 
+	casbin "github.com/casbin/casbin/v3"
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
+	"gorm.io/gorm"
 )
 
 type Container struct {
@@ -58,14 +65,17 @@ type Container struct {
 	ProjectHandler   *projectHandler.Handler
 	HabitsHandler    *habitsHandler.Handler
 	JournalHandler   *journalHandler.Handler
-	LoggerHandler    *loggerHandler.Handler
-	LogService       *loggerService.Service
-	TokenGen         *token.Generator
+	LoggerHandler      *loggerHandler.Handler
+	LogService         *loggerService.Service
+	Enforcer           *casbin.Enforcer
+	PermissionService  *permissionService.Service
+	PermissionHandler  *permissionHandler.Handler
+	TokenGen           *token.Generator
 	Responder        *response.Responder
 	Validate         *validator.Validate
 }
 
-func NewContainer(db *sql.DB, cfg *config.Config) *Container {
+func NewContainer(db *sql.DB, gormDB *gorm.DB, cfg *config.Config) (*Container, error) {
 	responder := response.NewResponder()
 	validate := validator.New()
 	r := router.New(responder)
@@ -124,6 +134,17 @@ func NewContainer(db *sql.DB, cfg *config.Config) *Container {
 	// Admin (использует workspace service и user repo)
 	adminHdlr := adminHandler.NewHandler(workspaceSvc, userRepository, responder)
 
+	// Casbin Enforcer
+	enforcer, err := authz.InitEnforcer(gormDB)
+	if err != nil {
+		return nil, err
+	}
+
+	// Permission (роли и права)
+	permissionRepository := permissionRepo.NewRepository(db)
+	permSvc := permissionService.NewService(permissionRepository, enforcer)
+	permissionHdlr := permissionHandler.NewHandler(permSvc, responder, validate)
+
 	return &Container{
 		Cfg:              cfg,
 		Router:           r,
@@ -137,12 +158,15 @@ func NewContainer(db *sql.DB, cfg *config.Config) *Container {
 		ProjectHandler:   projectHdlr,
 		HabitsHandler:    habitsHdlr,
 		JournalHandler:   journalHdlr,
-		LoggerHandler:    loggerHdlr,
-		LogService:       logService,
-		TokenGen:         tokenGen,
+		LoggerHandler:     loggerHdlr,
+		LogService:        logService,
+		Enforcer:          enforcer,
+		PermissionService: permSvc,
+		PermissionHandler: permissionHdlr,
+		TokenGen:          tokenGen,
 		Responder:        responder,
 		Validate:         validate,
-	}
+	}, nil
 }
 
 func (c *Container) RegisterRoutes(r *router.Router) {
@@ -156,18 +180,28 @@ func (c *Container) RegisterRoutes(r *router.Router) {
 	apiV1 := r.Group("/api/v1")
 
 	// Public auth routes (login, register, logout, refresh)
+	// Rate limit: 10 попыток в минуту на IP — защита от брутфорса
+	authRateLimiter := middleware.NewAuthRateLimiter(10, time.Minute)
 	authGroup := apiV1.Group("/auth")
+	authGroup.Use(authRateLimiter.Middleware(c.Responder))
 	c.AuthHandler.RegisterPublicRoutes(authGroup)
 
 	// Protected routes
 	protected := apiV1.Group("")
 	protected.Use(middleware.GinAuthMiddleware(c.TokenGen, c.Responder))
+	protected.Use(middleware.WorkspacePathMiddleware(c.WorkspaceService, c.Responder))
+	protected.Use(middleware.ModuleLicenseMiddleware(c.WorkspaceService, c.Responder))
+	protected.Use(middleware.PermissionMiddleware(c.Enforcer, c.PermissionService, c.Responder))
 
 	// Protected auth routes (me)
 	protectedAuthGroup := protected.Group("/auth")
 	c.AuthHandler.RegisterProtectedRoutes(protectedAuthGroup)
 
-	// Workspace routes (and nested: master data, notes)
+	// Me (текущий пользователь): права в workspace
+	meGroup := protected.Group("/me")
+	meGroup.GET("/permissions", c.PermissionHandler.GetMyPermissions)
+
+	// Workspace routes (and nested: master data, notes, permissions)
 	workspaceGroup := protected.Group("/workspaces")
 	c.WorkspaceHandler.RegisterRoutes(workspaceGroup)
 	wsIDGroup := workspaceGroup.Group("/:workspaceId")
@@ -177,6 +211,7 @@ func (c *Container) RegisterRoutes(r *router.Router) {
 	c.NotesHandler.RegisterRoutes(wsIDGroup)
 	c.HabitsHandler.RegisterRoutes(wsIDGroup)
 	c.JournalHandler.RegisterRoutes(wsIDGroup)
+	c.PermissionHandler.RegisterRoutes(wsIDGroup)
 
 	adminGroup := protected.Group("/admin")
 	adminGroup.Use(middleware.RequireAdmin(c.Responder))

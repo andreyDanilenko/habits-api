@@ -33,9 +33,25 @@ func New(cfg *config.Config) (*App, error) {
 		return nil, fmt.Errorf("Failed to run migrations: %w", err)
 	}
 
-	container := di.NewContainer(db, cfg)
+	gormDB, err := database.InitGormDB(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize gorm database: %w", err)
+	}
+
+	container, err := di.NewContainer(db, gormDB, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create DI container: %w", err)
+	}
 	r := container.Router
 	container.RegisterRoutes(r)
+
+	// Загрузка политик Casbin из БД (системные роли + назначения пользователей)
+	if err := container.PermissionService.EnsureSystemRolePolicies(context.Background()); err != nil {
+		return nil, fmt.Errorf("failed to ensure system role policies: %w", err)
+	}
+	if err := container.PermissionService.SyncGroupingPoliciesFromAssignments(context.Background()); err != nil {
+		return nil, fmt.Errorf("failed to sync grouping policies: %w", err)
+	}
 
 	// Создаем и запускаем воркер для обработки логов
 	logProcessor := worker.NewLogProcessor(container.LogService)
@@ -70,6 +86,10 @@ func (a *App) Run() error {
 func (a *App) Shutdown(ctx context.Context) error {
 	if a.logProcessor != nil {
 		a.logProcessor.Stop()
+	}
+
+	if a.logService != nil && a.logService.Enforcer != nil {
+		_ = a.logService.Enforcer.SavePolicy()
 	}
 
 	if a.db != nil {

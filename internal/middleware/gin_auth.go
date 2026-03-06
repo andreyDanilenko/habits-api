@@ -65,11 +65,27 @@ func GinAuthMiddleware(tokenGen *token.Generator, responder *response.Responder)
 	}
 }
 
-// Хелпер для хендлеров
+// GetUserIDFromGin возвращает user_id из контекста (устанавливается GinAuthMiddleware).
 func GetUserIDFromGin(c *gin.Context) (string, bool) {
 	userID, exists := c.Get(GinUserIDKey)
 	if !exists {
 		return "", false
 	}
 	return userID.(string), true
+}
+
+// GetAuthFromGin возвращает user_id и роль из контекста одним вызовом.
+// ok == false, если пользователь не аутентифицирован.
+func GetAuthFromGin(c *gin.Context) (userID string, role model.UserRole, ok bool) {
+	userID, ok = GetUserIDFromGin(c)
+	if !ok {
+		return "", "", false
+	}
+	roleVal, exists := c.Get(GinRoleKey)
+	if exists {
+		if r, okRole := roleVal.(model.UserRole); okRole {
+			role = r
+		}
+	}
+	return userID, role, true
 }

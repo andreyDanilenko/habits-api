@@ -137,18 +137,27 @@ func (s *AuthService) Login(ctx context.Context, req model.LoginRequest) (*Login
 	if err != nil {
 		return nil, err
 	}
+
+	// hashToCheck: при несуществующем пользователе используем dummy hash,
+	// чтобы время ответа не отличалось (защита от user enumeration по timing attack).
+	hashToCheck := password.DummyHash()
+	if user != nil {
+		hashToCheck = user.Password
+	}
+
+	// 2. Проверяем пароль (constant-time при любом user)
+	if !password.Check(req.Password, hashToCheck) {
+		return nil, ErrInvalidCredentials
+	}
 	if user == nil {
+		// При user=nil hashToCheck=dummyHash, Check всегда false — сюда не попадём,
+		// но оставляем для явности и на случай изменения логики.
 		return nil, ErrInvalidCredentials
 	}
 
-	// 2. Проверяем статус пользователя
+	// 3. Проверяем статус пользователя
 	if user.Status != nil && *user.Status != model.UserStatusActive {
 		return nil, errors.New("account is not active")
-	}
-
-	// 3. Проверяем пароль
-	if !password.Check(req.Password, user.Password) {
-		return nil, ErrInvalidCredentials
 	}
 
 	// 4. Генерируем access token

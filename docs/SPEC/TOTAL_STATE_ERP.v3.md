@@ -493,11 +493,23 @@ POST   /admin/users/:id/licenses
 [Запрос] → [AuthMiddleware] → [WorkspaceMiddleware] → [ModuleMiddleware] → [PermissionMiddleware] → [Хендлер]
     1. Извлекает       2. Извлекает          3. Проверяет          4. Проверяет
        user_id из        workspace_id из        модуль и              права через
-       JWT               URL, проверяет         лицензию              Casbin
+       JWT               URL, проверяет         лицензию              Casbin + индивидуальные права
                          членство
 ```
 
-### 11.6. Новые таблицы для прав доступа
+### 11.6. Текущий статус реализации прав (backend)
+
+- ✅ Схема БД: `permission_catalog`, `workspace_roles`, `user_role_assignments`, `user_permissions`, `role_inheritance`
+- ✅ Миграции данных: перенос из `user_workspaces` в `user_role_assignments`, триггеры системных ролей
+- ✅ Инфраструктура Casbin: модель с доменами, адаптер, `casbin_rule`, загрузка/сохранение политик (graceful shutdown)
+- ✅ PermissionService: CRUD ролей, назначения, индивидуальные права, эффективные права, наследование ролей, компенсирующие откаты
+- ✅ API для прав: `/permissions/catalog`, `/roles`, `/roles/:roleId/inherit/:parentRoleId`, `/users/:userId/roles`, `/users/:userId/permissions`, `/me/permissions`
+- ✅ Middleware-цепочка: Auth → Workspace → Module → Permission
+- ✅ Боевой режим PermissionMiddleware: Casbin реально блокирует доступ (403) при отсутствии прав
+- ✅ Индивидуальные права в runtime-проверке: при отказе по ролям PermissionMiddleware дополнительно проверяет `user_permissions` (формат `module:entity:action`) и при совпадении разрешает доступ
+- ⚠️ Кэширование прав: нет TTL-кэша для `GetEffectivePermissions` (можно добавить на следующем этапе)
+
+### 11.7. Новые таблицы для прав доступа
 
 | Таблица | Назначение |
 |---------|------------|
@@ -524,7 +536,6 @@ POST   /admin/users/:id/licenses
 
 | Задача | Приоритет | Описание |
 |--------|-----------|----------|
-| ModuleMiddleware | 🔴 Высокий | Проверка доступности модуля перед проверкой прав |
 | Проверка лицензий при создании workspace | 🟡 Средний | Автоматическое включение модулей по лицензиям пользователя |
 
 ---
@@ -606,16 +617,16 @@ GET    /me/permissions?workspaceId={id}
 - [x] Управление проектами
 - [x] Привязка сущностей
 
-### Этап 5: Гибкая система прав доступа (🔄 В РАБОТЕ) - НОВЫЙ ЭТАП
-- [ ] Создание новых таблиц: `permission_catalog`, `workspace_roles`, `user_role_assignments`, `user_permissions`, `role_inheritance`
-- [ ] Наполнение каталога прав для всех модулей
-- [ ] Интеграция Casbin
-- [ ] WorkspaceMiddleware
-- [ ] ModuleMiddleware
-- [ ] PermissionMiddleware
-- [ ] API управления ролями и правами
-- [ ] Миграция существующих данных из `user_workspaces`
-- [ ] Тестирование и отладка
+### Этап 5: Гибкая система прав доступа (✅ ЗАВЕРШЁН)
+- [x] Создание новых таблиц: `permission_catalog`, `workspace_roles`, `user_role_assignments`, `user_permissions`, `role_inheritance`
+- [x] Наполнение каталога прав для всех модулей
+- [x] Интеграция Casbin
+- [x] WorkspaceMiddleware (проверка membership по `:workspaceId` в URL)
+- [x] ModuleMiddleware (проверка доступности модуля и лицензий)
+- [x] PermissionMiddleware (боевой режим, Casbin + индивидуальные права)
+- [x] API управления ролями и правами
+- [x] Миграция существующих данных из `user_workspaces`
+- [x] Тестирование и отладка в рамках текущего объёма
 
 ### Этап 6: Завершение Core-функционала (📅 ПЛАН)
 - [ ] Приглашения пользователей в workspace
@@ -678,7 +689,7 @@ GET    /me/permissions?workspaceId={id}
 | **Этап 2** | ✅ Готов | Habits, Notes, Master Data полностью функциональны |
 | **Этап 3** | ✅ Готов | Все эндпоинты CRM реализованы |
 | **Этап 4** | ✅ Готов | Projects полностью функциональны |
-| **Этап 5** | 🔄 В работе | Гибкая система прав доступа внедрена |
+| **Этап 5** | ✅ Готов | Гибкая система прав доступа внедрена (backend) |
 | **Этап 6** | 📅 План | Приглашения, управление ролями, аудит |
 | **Этап 7** | 📅 План | Tasks реализован и интегрирован |
 | **Этап 8** | 📅 План | Finance и Inventory реализованы |
