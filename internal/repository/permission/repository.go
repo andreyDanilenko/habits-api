@@ -228,11 +228,13 @@ func (r *Repository) ListUserRoleAssignments(ctx context.Context, userID, worksp
 }
 
 // CreateUserRoleAssignment создаёт назначение роли пользователю.
+// Идемпотентно: если назначение уже есть (duplicate key), возвращает nil без ошибки.
 func (r *Repository) CreateUserRoleAssignment(ctx context.Context, a *model.UserRoleAssignment) error {
 	id := uuid.New().String()
 	query := `
 		INSERT INTO user_role_assignments (id, user_id, role_id, workspace_id, assigned_by, assigned_at)
 		VALUES ($1, $2, $3, $4, $5, NOW())
+		ON CONFLICT (user_id, role_id, workspace_id) DO NOTHING
 	`
 	assignedBy := sql.NullString{}
 	if a.AssignedBy != "" {

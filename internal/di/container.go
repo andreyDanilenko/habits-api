@@ -87,7 +87,15 @@ func NewContainer(db *sql.DB, gormDB *gorm.DB, cfg *config.Config) (*Container, 
 	workspaceRepository := workspaceRepo.NewRepository(db)
 	userPrefsRepository := userPrefsRepo.NewRepository(db)
 	licenseRepository := licenseRepo.NewRepository(db)
-	workspaceSvc := workspaceService.NewService(workspaceRepository, userPrefsRepository, licenseRepository)
+
+	// Permission (нужен для workspace Create — назначение OWNER при создании)
+	permissionRepository := permissionRepo.NewRepository(db)
+	enforcer, err := authz.InitEnforcer(gormDB)
+	if err != nil {
+		return nil, err
+	}
+	permSvc := permissionService.NewService(permissionRepository, enforcer)
+	workspaceSvc := workspaceService.NewService(workspaceRepository, userPrefsRepository, licenseRepository, permSvc)
 
 	// Auth
 	userRepository := userRepo.NewRepository(db)
@@ -134,15 +142,7 @@ func NewContainer(db *sql.DB, gormDB *gorm.DB, cfg *config.Config) (*Container, 
 	// Admin (использует workspace service и user repo)
 	adminHdlr := adminHandler.NewHandler(workspaceSvc, userRepository, responder)
 
-	// Casbin Enforcer
-	enforcer, err := authz.InitEnforcer(gormDB)
-	if err != nil {
-		return nil, err
-	}
-
-	// Permission (роли и права)
-	permissionRepository := permissionRepo.NewRepository(db)
-	permSvc := permissionService.NewService(permissionRepository, enforcer)
+	// Permission handler (permSvc и enforcer уже созданы выше)
 	permissionHdlr := permissionHandler.NewHandler(permSvc, responder, validate)
 
 	return &Container{

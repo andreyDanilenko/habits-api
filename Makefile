@@ -8,4 +8,8 @@ generate:
 build: docs
 	go build -o bin/api ./cmd/api
 
-.PHONY: docs generate build
+# Откат версии миграций до 21 (после замены 022-025 на единую 022)
+migrate-force-21:
+	go run ./cmd/migrate_force
+
+.PHONY: docs generate build migrate-force-21

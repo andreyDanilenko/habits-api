@@ -173,6 +173,15 @@ func (s *Service) DeleteRole(ctx context.Context, roleID string) error {
 	return s.repo.DeleteRole(ctx, roleID)
 }
 
+// AssignRoleByName назначает роль пользователю по имени (OWNER, ADMIN, MEMBER, GUEST).
+func (s *Service) AssignRoleByName(ctx context.Context, userID, workspaceID, roleName, assignedBy string) error {
+	role, err := s.repo.GetRoleByName(ctx, workspaceID, roleName)
+	if err != nil || role == nil {
+		return permRepo.ErrRoleNotFound
+	}
+	return s.AssignRole(ctx, userID, role.ID, workspaceID, assignedBy)
+}
+
 // AssignRole назначает роль пользователю и добавляет групповую политику в Casbin.
 // При сбое сохранения политик откатывает назначение в БД.
 func (s *Service) AssignRole(ctx context.Context, userID, roleID, workspaceID, assignedBy string) error {
@@ -423,6 +432,11 @@ func (s *Service) SeedSystemPoliciesForWorkspace(workspaceID string) {
 	s.addSystemPoliciesForWorkspace(workspaceID)
 }
 
+// SavePolicy сохраняет политики Casbin (адаптер/файл).
+func (s *Service) SavePolicy() error {
+	return s.enforcer.SavePolicy()
+}
+
 func (s *Service) addSystemPoliciesForWorkspace(workspaceID string) {
 	systemRoles := []string{"role:OWNER", "role:ADMIN", "role:MEMBER", "role:GUEST"}
 	for _, sub := range systemRoles {
@@ -458,7 +472,8 @@ var (
 		{"habits:journal", "create"}, {"habits:journal", "read"}, {"habits:journal", "update"}, {"habits:journal", "delete"},
 		{"projects:project", "create"}, {"projects:project", "read"}, {"projects:project", "update"}, {"projects:project", "delete"},
 		{"projects:entity", "attach"}, {"projects:entity", "detach"},
-		{"workspace:member", "invite"}, {"workspace:member", "remove"}, {"workspace:role", "manage"}, {"workspace:module", "manage"},
+		{"workspace:member", "invite"}, {"workspace:member", "remove"}, {"workspace:role", "manage"},
+		{"workspace:module", "read"}, {"workspace:module", "manage"},
 	}
 	memberBasePolicies = []objAct{
 		{"crm:deal", "create"}, {"crm:deal", "read"}, {"crm:deal", "update"}, {"crm:deal", "move"},
@@ -467,11 +482,13 @@ var (
 		{"habits:habit", "create"}, {"habits:habit", "read"}, {"habits:habit", "update"}, {"habits:habit", "complete"},
 		{"habits:journal", "create"}, {"habits:journal", "read"}, {"habits:journal", "update"},
 		{"projects:project", "create"}, {"projects:project", "read"}, {"projects:project", "update"},
-		{"workspace:member", "invite"}, {"workspace:module", "manage"},
+		{"workspace:member", "invite"},
+		{"workspace:module", "read"}, {"workspace:module", "manage"},
 	}
 	guestBasePolicies = []objAct{
 		{"crm:deal", "read"}, {"crm:contact", "read"}, {"crm:company", "read"},
 		{"habits:habit", "read"}, {"habits:journal", "read"},
 		{"projects:project", "read"},
+		{"workspace:module", "read"}, // просмотр списка модулей (GET /modules)
 	}
 )

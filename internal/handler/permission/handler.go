@@ -305,6 +305,7 @@ func (h *Handler) GetMyPermissions(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	var permissions []string
+	var roles []string
 	// Глобальный ADMIN в PermissionMiddleware имеет полный доступ в любом workspace.
 	// Для согласованности фронта возвращаем для него весь каталог прав как эффективные.
 	if userRole == model.UserRoleAdmin {
@@ -322,6 +323,7 @@ func (h *Handler) GetMyPermissions(c *gin.Context) {
 		for p := range seen {
 			permissions = append(permissions, p)
 		}
+		roles = []string{"ADMIN"}
 	} else {
 		var err error
 		permissions, err = h.service.GetEffectivePermissions(ctx, userID, workspaceID)
@@ -329,12 +331,25 @@ func (h *Handler) GetMyPermissions(c *gin.Context) {
 			h.responder.InternalServerError(c, "Failed to get permissions")
 			return
 		}
+		roles, _ = h.service.GetUserRoles(ctx, userID, workspaceID)
 	}
-
-	roles, _ := h.service.GetUserRoles(ctx, userID, workspaceID)
+	systemRole := pickSystemRole(roles)
 
 	h.responder.SuccessWithData(c, gin.H{
 		"permissions": permissions,
 		"roles":       roles,
+		"systemRole":  systemRole,
 	})
+}
+
+// pickSystemRole возвращает приоритетную роль workspace (OWNER > ADMIN > MEMBER > GUEST).
+func pickSystemRole(roles []string) string {
+	for _, r := range []string{"OWNER", "ADMIN", "MEMBER", "GUEST"} {
+		for _, role := range roles {
+			if role == r {
+				return r
+			}
+		}
+	}
+	return ""
 }

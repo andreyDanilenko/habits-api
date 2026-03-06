@@ -212,8 +212,6 @@ func PermissionMiddleware(enforcer *casbin.Enforcer, permSvc *permissionService.
 			}
 		}
 
-		log.Printf("PermissionMiddleware: decision allow=%v (sub=%s, dom=%s, obj=%s, act=%s)", allowed, sub, workspaceID, obj, act)
-
 		if !allowed {
 			responder.Forbidden(c, "Insufficient permissions")
 			c.Abort()
@@ -253,7 +251,8 @@ var endpointPermissionTable = []endpointPermissionRule{
 	// Workspace-админка (участники, модули, роли)
 	{"/members", true, []string{http.MethodGet, http.MethodPost}, "workspace:member", "invite"},
 	{"/members", true, []string{http.MethodDelete}, "workspace:member", "remove"},
-	{"/modules", true, []string{http.MethodGet, http.MethodPost, http.MethodDelete}, "workspace:module", "manage"},
+	{"/modules", true, []string{http.MethodGet}, "workspace:module", "read"},   // GUEST может просматривать список модулей
+	{"/modules", true, []string{http.MethodPost, http.MethodDelete}, "workspace:module", "manage"},
 	{"/roles", true, []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete}, "workspace:role", "manage"},
 	// CRM
 	{"/crm/deals", false, []string{http.MethodGet}, "crm:deal", "read"},

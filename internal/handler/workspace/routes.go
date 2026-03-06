@@ -9,6 +9,7 @@ const (
 	RouteUpdate     = "/:workspaceId"
 	RouteDelete     = "/:workspaceId"
 	RouteMembers    = "/:workspaceId/members"
+	RouteMemberOne  = "/:workspaceId/members/:userId"
 	RouteSwitch     = "/:workspaceId/switch"
 	RouteModules    = "/:workspaceId/modules"
 	RouteModuleOne  = "/:workspaceId/modules/:moduleCode"

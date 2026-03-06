@@ -77,7 +77,6 @@ func (h *Handler) Login(c *gin.Context) {
 		}
 		return
 	}
-
 	expiresAt := time.Now().Add(time.Duration(loginResp.ExpiresIn) * time.Second)
 	h.cookieManager.SetToken(c.Writer, "access_token", loginResp.AccessToken, expiresAt)
 
@@ -157,7 +156,6 @@ func (h *Handler) Register(c *gin.Context) {
 		}
 		return
 	}
-
 	expiresAt := time.Now().Add(time.Duration(registerResp.ExpiresIn) * time.Second)
 	h.cookieManager.SetToken(c.Writer, "access_token", registerResp.AccessToken, expiresAt)
 

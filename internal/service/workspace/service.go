@@ -3,8 +3,10 @@ package workspace
 import (
 	"context"
 	"errors"
+	"log"
 
 	"backend/internal/model"
+	permService "backend/internal/service/permission"
 	"backend/internal/repository/license"
 	"backend/internal/repository/user_preferences"
 	"backend/internal/repository/workspace"
@@ -13,23 +15,30 @@ import (
 )
 
 var (
-	ErrWorkspaceNotFound  = errors.New("workspace not found")
-	ErrAccessDenied       = errors.New("access denied")
-	ErrNoActiveWorkspace  = errors.New("no active workspace")
-	ErrLicenseRequired    = errors.New("license required: purchase module or request admin grant")
+	ErrWorkspaceNotFound   = errors.New("workspace not found")
+	ErrAccessDenied        = errors.New("access denied")
+	ErrNoActiveWorkspace   = errors.New("no active workspace")
+	ErrLicenseRequired     = errors.New("license required: purchase module or request admin grant")
+	ErrMemberNotFound      = errors.New("member not found")
+	ErrCannotRemoveSelf    = errors.New("cannot remove yourself from workspace")
+	ErrCannotRemoveOwner   = errors.New("cannot remove the sole owner")
+	ErrCannotChangeOwnRole = errors.New("cannot change your own role")
+	ErrCannotChangeOwner   = errors.New("cannot change role of the sole owner")
 )
 
 type Service struct {
-	repo       *workspace.Repository
-	prefRepo   *user_preferences.Repository
+	repo        *workspace.Repository
+	prefRepo    *user_preferences.Repository
 	licenseRepo *license.Repository
+	permSvc     *permService.Service
 }
 
-func NewService(repo *workspace.Repository, prefRepo *user_preferences.Repository, licenseRepo *license.Repository) *Service {
+func NewService(repo *workspace.Repository, prefRepo *user_preferences.Repository, licenseRepo *license.Repository, permSvc *permService.Service) *Service {
 	return &Service{
 		repo:        repo,
 		prefRepo:    prefRepo,
 		licenseRepo: licenseRepo,
+		permSvc:     permSvc,
 	}
 }
 
@@ -49,7 +58,21 @@ func (s *Service) Create(ctx context.Context, dto model.CreateWorkspaceDto, user
 		return nil, err
 	}
 
-	return s.repo.Create(ctx, dto, uid)
+	ws, err := s.repo.Create(ctx, dto, uid)
+	if err != nil {
+		return nil, err
+	}
+
+	// Триггер создал workspace_roles. Заливаем политики Casbin для нового workspace
+	// (EnsureSystemRolePolicies при старте не видит workspace, созданные в runtime).
+	s.permSvc.SeedSystemPoliciesForWorkspace(ws.ID)
+
+	// Назначаем роль OWNER в user_role_assignments для Casbin (user_workspaces уже добавлен в repo).
+	if err := s.permSvc.AssignRoleByName(ctx, userID, ws.ID, "OWNER", userID); err != nil {
+		log.Printf("Workspace Create: failed to assign OWNER role to creator %s in workspace %s: %v", userID, ws.ID, err)
+	}
+
+	return ws, nil
 }
 
 func (s *Service) Get(ctx context.Context, workspaceID, userID string, userRole model.UserRole) (*model.Workspace, error) {
@@ -140,6 +163,14 @@ func (s *Service) SetCurrentWorkspace(ctx context.Context, userID, workspaceID s
 		return err
 	}
 	return s.prefRepo.SetCurrentWorkspace(ctx, uid, workspaceID)
+}
+
+func (s *Service) UnsetCurrentWorkspace(ctx context.Context, userID string) error {
+	uid, err := uuid.Parse(userID)
+	if err != nil {
+		return err
+	}
+	return s.prefRepo.UnsetCurrentWorkspace(ctx, uid)
 }
 
 // GetCurrentWorkspace возвращает текущий воркспейс пользователя. Для ADMIN при отсутствии выбора — первый из всех воркспейсов.
@@ -327,6 +358,133 @@ func (s *Service) CanEnableModuleInWorkspace(ctx context.Context, workspaceID, u
 	}
 	modID, _ := uuid.Parse(mod.ID)
 	return s.licenseRepo.HasLicense(ctx, uid, modID, &wsID)
+}
+
+// ListMembers возвращает участников workspace. Доступ: любой участник workspace.
+func (s *Service) ListMembers(ctx context.Context, workspaceID, userID string, userRole model.UserRole) ([]model.WorkspaceMember, error) {
+	wsID, err := uuid.Parse(workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	uid, err := uuid.Parse(userID)
+	if err != nil {
+		return nil, err
+	}
+	hasAccess, err := s.repo.HasAccess(ctx, wsID, uid)
+	if err != nil {
+		return nil, err
+	}
+	if !hasAccess && userRole != model.UserRoleAdmin {
+		return nil, ErrAccessDenied
+	}
+	return s.repo.ListMembers(ctx, wsID)
+}
+
+// RemoveMember удаляет участника из workspace. Только OWNER/ADMIN.
+func (s *Service) RemoveMember(ctx context.Context, workspaceID, userID, targetUserID string, userRole model.UserRole) error {
+	wsID, err := uuid.Parse(workspaceID)
+	if err != nil {
+		return err
+	}
+	uid, err := uuid.Parse(userID)
+	if err != nil {
+		return err
+	}
+	targetUID, err := uuid.Parse(targetUserID)
+	if err != nil {
+		return err
+	}
+	if userID == targetUserID {
+		return ErrCannotRemoveSelf
+	}
+	if userRole != model.UserRoleAdmin {
+		callerRole, err := s.repo.GetUserWorkspaceRole(ctx, wsID, uid)
+		if err != nil || (callerRole != "OWNER" && callerRole != "ADMIN") {
+			return ErrAccessDenied
+		}
+	}
+	ownerCount, err := s.repo.CountOwners(ctx, wsID)
+	if err != nil {
+		return err
+	}
+	targetRole, err := s.repo.GetUserWorkspaceRole(ctx, wsID, targetUID)
+	if err != nil {
+		return err
+	}
+	if targetRole == "" {
+		return ErrMemberNotFound
+	}
+	if targetRole == "OWNER" && ownerCount <= 1 {
+		return ErrCannotRemoveOwner
+	}
+	// Сначала снимаем роли через permission service (Casbin + user_role_assignments)
+	rolesFull, err := s.permSvc.GetUserRolesFull(ctx, targetUserID, workspaceID)
+	if err != nil {
+		return err
+	}
+	for _, role := range rolesFull {
+		_ = s.permSvc.RemoveRole(ctx, targetUserID, role.ID, workspaceID)
+	}
+	// Затем удаляем из user_workspaces
+	if err := s.repo.RemoveMember(ctx, wsID, targetUID); err != nil {
+		return err
+	}
+	// Сбрасываем current_workspace_id у удалённого пользователя, если он указывал на этот workspace
+	if cur, _ := s.prefRepo.GetCurrentWorkspace(ctx, targetUID); cur == workspaceID {
+		_ = s.prefRepo.UnsetCurrentWorkspace(ctx, targetUID)
+	}
+	return nil
+}
+
+// UpdateMemberRole меняет системную роль участника. Только OWNER/ADMIN.
+func (s *Service) UpdateMemberRole(ctx context.Context, workspaceID, userID, targetUserID, newRole string, userRole model.UserRole) error {
+	wsID, err := uuid.Parse(workspaceID)
+	if err != nil {
+		return err
+	}
+	uid, err := uuid.Parse(userID)
+	if err != nil {
+		return err
+	}
+	targetUID, err := uuid.Parse(targetUserID)
+	if err != nil {
+		return err
+	}
+	if userRole != model.UserRoleAdmin {
+		callerRole, err := s.repo.GetUserWorkspaceRole(ctx, wsID, uid)
+		if err != nil || (callerRole != "OWNER" && callerRole != "ADMIN") {
+			return ErrAccessDenied
+		}
+	}
+	if userID == targetUserID {
+		return ErrCannotChangeOwnRole
+	}
+	targetRole, err := s.repo.GetUserWorkspaceRole(ctx, wsID, targetUID)
+	if err != nil || targetRole == "" {
+		return ErrMemberNotFound
+	}
+	ownerCount, err := s.repo.CountOwners(ctx, wsID)
+	if err != nil {
+		return err
+	}
+	if targetRole == "OWNER" && ownerCount <= 1 {
+		return ErrCannotChangeOwner
+	}
+	// Обновить user_workspaces.role
+	if err := s.repo.UpdateUserWorkspaceRole(ctx, wsID, targetUID, newRole); err != nil {
+		return err
+	}
+	// Снять старую системную роль и назначить новую (user_role_assignments + Casbin)
+	rolesFull, err := s.permSvc.GetUserRolesFull(ctx, targetUserID, workspaceID)
+	if err != nil {
+		return err
+	}
+	for _, role := range rolesFull {
+		if role.IsSystem {
+			_ = s.permSvc.RemoveRole(ctx, targetUserID, role.ID, workspaceID)
+		}
+	}
+	return s.permSvc.AssignRoleByName(ctx, targetUserID, workspaceID, newRole, userID)
 }
 
 // GrantLicense выдаёт лицензию пользователю (только админ). Для теста или промо до момента оплаты.
