@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 	"time"
 
@@ -49,13 +50,59 @@ func (r *Repository) List(ctx context.Context, workspaceID uuid.UUID, targetDate
 		return nil, fmt.Errorf("failed to query habits: %w", err)
 	}
 	defer rows.Close()
-	return scanHabitsWithOwner(rows)
+	habits, err := scanHabitsWithOwner(rows)
+	if err != nil {
+		return nil, err
+	}
+	r.enrichOwnerNames(ctx, habits)
+	return habits, nil
 }
 
 // GetHabitsForDate возвращает все привычки воркспейса, активные на указанную дату.
+// Логика: прошлое — habit_versions + completions; сегодня и будущее — habits.
 func (r *Repository) GetHabitsForDate(ctx context.Context, workspaceID uuid.UUID, targetDate time.Time) ([]model.Habit, error) {
 	normalizedDate := NormalizeDate(targetDate)
+	todayStart := NormalizeDate(time.Now().UTC())
 
+	if !normalizedDate.Before(todayStart) {
+		// Сегодня и будущее: берём напрямую из habits
+		return r.getHabitsFromTable(ctx, workspaceID, normalizedDate)
+	}
+
+	// Прошлое: habit_versions + completions (привычки с выполнением, но без версии)
+	return r.getHabitsForPastDate(ctx, workspaceID, normalizedDate)
+}
+
+// getHabitsFromTable — привычки из таблицы habits (для сегодня и будущего).
+func (r *Repository) getHabitsFromTable(ctx context.Context, workspaceID uuid.UUID, targetDate time.Time) ([]model.Habit, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT h.id, h.title, h.description, h.color, h.icon, h.target_days, h.daily_goal, h.preferred_time, h.category,
+			h.schedule_type, h.recurring_days, h.one_time_date, h.is_active, h.user_id, h.workspace_id, h.created_at, h.updated_at,
+			COALESCE(u.name, u.email, '') as owner_name
+		FROM habits h
+		LEFT JOIN users u ON u.id = h.user_id
+		WHERE h.workspace_id = $1 AND h.is_active = true AND DATE(h.created_at) <= $2::date
+			AND (
+				(h.schedule_type = 'recurring' AND EXTRACT(DOW FROM $2::date) = ANY(h.recurring_days))
+				OR (h.schedule_type = 'one_time' AND h.one_time_date = $2::date)
+			)
+		ORDER BY h.preferred_time NULLS LAST, h.created_at DESC
+	`, workspaceID, targetDate)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query habits from table: %w", err)
+	}
+	defer rows.Close()
+	habits, err := scanHabitsWithOwner(rows)
+	if err != nil {
+		return nil, err
+	}
+	r.enrichOwnerNames(ctx, habits)
+	return habits, nil
+}
+
+// getHabitsForPastDate — привычки для прошлой даты: habit_versions + completions (сироты).
+func (r *Repository) getHabitsForPastDate(ctx context.Context, workspaceID uuid.UUID, targetDate time.Time) ([]model.Habit, error) {
+	// 1. habit_versions — основной источник для прошлого
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT DISTINCT ON (hv.habit_id)
 			hv.habit_id AS id, hv.title, hv.description, hv.color, hv.icon, hv.target_days, hv.daily_goal, hv.preferred_time, hv.category,
@@ -71,9 +118,9 @@ func (r *Repository) GetHabitsForDate(ctx context.Context, workspaceID uuid.UUID
 				OR (hv.schedule_type = 'one_time' AND hv.one_time_date = $2::date)
 			)
 		ORDER BY hv.habit_id, (hv.valid_to IS NOT NULL) DESC, hv.valid_from DESC
-	`, workspaceID, normalizedDate)
+	`, workspaceID, targetDate)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query habits for date (versions): %w", err)
+		return nil, fmt.Errorf("failed to query habit_versions: %w", err)
 	}
 	defer rows.Close()
 
@@ -81,29 +128,138 @@ func (r *Repository) GetHabitsForDate(ctx context.Context, workspaceID uuid.UUID
 	if err != nil {
 		return nil, err
 	}
-
-	todayStart := NormalizeDate(time.Now().UTC())
-	if len(habits) == 0 && !normalizedDate.Before(todayStart) {
-		fallbackRows, err := r.db.QueryContext(ctx, `
-			SELECT h.id, h.title, h.description, h.color, h.icon, h.target_days, h.daily_goal, h.preferred_time, h.category,
-				h.schedule_type, h.recurring_days, h.one_time_date, h.is_active, h.user_id, h.workspace_id, h.created_at, h.updated_at,
-				COALESCE(u.name, u.email, '') as owner_name
-			FROM habits h
-			LEFT JOIN users u ON u.id = h.user_id
-			WHERE h.workspace_id = $1 AND h.is_active = true AND DATE(h.created_at) <= $2::date
-				AND (
-					(h.schedule_type = 'recurring' AND EXTRACT(DOW FROM $2::date) = ANY(h.recurring_days))
-					OR (h.schedule_type = 'one_time' AND h.one_time_date = $2::date)
-				)
-			ORDER BY h.preferred_time NULLS LAST, h.created_at DESC
-		`, workspaceID, normalizedDate)
-		if err != nil {
-			return nil, fmt.Errorf("failed to query habits for date (fallback): %w", err)
-		}
-		defer fallbackRows.Close()
-		return scanHabitsWithOwner(fallbackRows)
+	seenIDs := make(map[string]bool)
+	for _, h := range habits {
+		seenIDs[h.ID] = true
 	}
+
+	// 2. completions — привычки с выполнением в этот день, которых нет в versions (сироты)
+	completionHabitIDs, err := r.getCompletionHabitIDsForDate(ctx, workspaceID, targetDate)
+	if err != nil {
+		return nil, err
+	}
+	for _, habitID := range completionHabitIDs {
+		if seenIDs[habitID.String()] {
+			continue
+		}
+		// Пробуем versions (удалённая привычка) или habits (ещё существует)
+		vid, vtitle, vcolor, ok := r.versions.GetForDate(ctx, habitID, workspaceID, targetDate)
+		if ok {
+			seenIDs[vid] = true
+			habits = append(habits, model.Habit{
+				ID: vid, Title: vtitle, Color: vcolor,
+				UserID: "", WorkspaceID: workspaceID.String(),
+				CreatedAt: targetDate.Format("2006-01-02"), UpdatedAt: targetDate.Format("2006-01-02"),
+			})
+			continue
+		}
+		// Привычка ещё в habits — берём оттуда
+		h, err := r.getHabitByIDForDate(ctx, habitID, workspaceID, targetDate)
+		if err == nil && h != nil {
+			seenIDs[h.ID] = true
+			habits = append(habits, *h)
+		}
+	}
+
+	r.enrichOwnerNames(ctx, habits)
+	sort.Slice(habits, func(i, j int) bool {
+		pi, pj := habits[i].PreferredTime, habits[j].PreferredTime
+		if pi == "" && pj == "" {
+			return habits[i].CreatedAt > habits[j].CreatedAt
+		}
+		if pi == "" {
+			return false
+		}
+		if pj == "" {
+			return true
+		}
+		if pi != pj {
+			return pi < pj
+		}
+		return habits[i].CreatedAt > habits[j].CreatedAt
+	})
 	return habits, nil
+}
+
+// getCompletionHabitIDsForDate — habit_id с completion на дату в workspace (включая удалённые привычки).
+func (r *Repository) getCompletionHabitIDsForDate(ctx context.Context, workspaceID uuid.UUID, targetDate time.Time) ([]uuid.UUID, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT habit_id FROM habit_completions
+		WHERE workspace_id = $1 AND date = $2
+	`, workspaceID, targetDate)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// getHabitByIDForDate — привычка из habits по id, если подходит под дату по расписанию.
+func (r *Repository) getHabitByIDForDate(ctx context.Context, habitID, workspaceID uuid.UUID, targetDate time.Time) (*model.Habit, error) {
+	return r.scanOneHabitWithOwner(ctx, `
+		SELECT h.id, h.title, h.description, h.color, h.icon, h.target_days, h.daily_goal, h.preferred_time, h.category,
+			h.schedule_type, h.recurring_days, h.one_time_date, h.is_active, h.user_id, h.workspace_id, h.created_at, h.updated_at,
+			COALESCE(u.name, u.email, '') as owner_name
+		FROM habits h
+		LEFT JOIN users u ON u.id = h.user_id
+		WHERE h.id = $1 AND h.workspace_id = $2 AND h.is_active = true AND DATE(h.created_at) <= $3::date
+			AND (
+				(h.schedule_type = 'recurring' AND EXTRACT(DOW FROM $3::date) = ANY(h.recurring_days))
+				OR (h.schedule_type = 'one_time' AND h.one_time_date = $3::date)
+			)
+	`, habitID, workspaceID, targetDate)
+}
+
+// enrichOwnerNames заполняет OwnerName для привычек, где он пустой (fallback если JOIN с users не сработал).
+func (r *Repository) enrichOwnerNames(ctx context.Context, habits []model.Habit) {
+	userIDs := make(map[string]bool)
+	for _, h := range habits {
+		if h.OwnerName == "" && h.UserID != "" {
+			userIDs[h.UserID] = true
+		}
+	}
+	if len(userIDs) == 0 {
+		return
+	}
+	ids := make([]uuid.UUID, 0, len(userIDs))
+	for idStr := range userIDs {
+		if uid, err := uuid.Parse(idStr); err == nil {
+			ids = append(ids, uid)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, COALESCE(name, email, '') FROM users WHERE id = ANY($1)
+	`, pq.Array(ids))
+	if err != nil {
+		log.Printf("enrichOwnerNames: %v", err)
+		return
+	}
+	defer rows.Close()
+	namesByID := make(map[string]string)
+	for rows.Next() {
+		var id uuid.UUID
+		var name string
+		if err := rows.Scan(&id, &name); err != nil {
+			continue
+		}
+		namesByID[id.String()] = name
+	}
+	for i := range habits {
+		if habits[i].OwnerName == "" && namesByID[habits[i].UserID] != "" {
+			habits[i].OwnerName = namesByID[habits[i].UserID]
+		}
+	}
 }
 
 func (r *Repository) Create(ctx context.Context, dto model.CreateHabitDto, userID, workspaceID uuid.UUID) (*model.Habit, error) {

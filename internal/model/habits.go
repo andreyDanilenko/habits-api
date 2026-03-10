@@ -16,7 +16,7 @@ type Habit struct {
 	IsActive      bool   `json:"isActive" db:"is_active"`
 	UserID        string `json:"userId" db:"user_id"`
 	WorkspaceID   string `json:"workspaceId" db:"workspace_id"`
-	OwnerName     string `json:"ownerName,omitempty" db:"-"` // Имя владельца (для бейджа), заполняется при выборке
+	OwnerName     string `json:"ownerName" db:"-"` // Имя владельца (для бейджа), заполняется при выборке. Всегда отправляется ("" если нет).
 	CreatedAt     string `json:"createdAt" db:"created_at"`
 	UpdatedAt     string `json:"updatedAt" db:"updated_at"`
 }
