@@ -7,23 +7,27 @@ import (
 
 	"backend/internal/model"
 	permRepo "backend/internal/repository/permission"
+	workspaceRepo "backend/internal/repository/workspace"
 
-	casbin "github.com/casbin/casbin/v3"
+	"github.com/casbin/casbin/v3"
+	"github.com/google/uuid"
 )
 
 var (
 	ErrRoleSystem      = errors.New("cannot modify or delete system role")
-	ErrRoleHasUsers    = errors.New("cannot delete role with assigned users")
 	ErrInvalidPermForm = errors.New("permission must be format module:entity:action")
 )
 
+const defaultRoleOnDelete = "GUEST"
+
 type Service struct {
-	repo     *permRepo.Repository
-	enforcer *casbin.Enforcer
+	repo         *permRepo.Repository
+	workspaceRepo *workspaceRepo.Repository
+	enforcer     *casbin.Enforcer
 }
 
-func NewService(repo *permRepo.Repository, enforcer *casbin.Enforcer) *Service {
-	return &Service{repo: repo, enforcer: enforcer}
+func NewService(repo *permRepo.Repository, enforcer *casbin.Enforcer, workspaceRepo *workspaceRepo.Repository) *Service {
+	return &Service{repo: repo, workspaceRepo: workspaceRepo, enforcer: enforcer}
 }
 
 // GetCatalog возвращает каталог прав для UI.
@@ -116,7 +120,7 @@ func (s *Service) UpdateRole(ctx context.Context, roleID, name, description stri
 		effectiveName = strings.TrimSpace(name)
 		if effectiveName != oldRoleName {
 			existing, _ := s.repo.GetRoleByName(ctx, role.WorkspaceID, effectiveName)
-			if existing != nil {
+			if existing != nil && existing.ID != roleID {
 				return errors.New("role with this name already exists in workspace")
 			}
 		}
@@ -144,9 +148,8 @@ func (s *Service) UpdateRole(ctx context.Context, roleID, name, description stri
 	return s.enforcer.SavePolicy()
 }
 
-// DeleteRole удаляет роль (только кастомную, без назначений).
-// Сначала удаляет политики в Casbin, затем запись в БД.
-func (s *Service) DeleteRole(ctx context.Context, roleID string) error {
+// DeleteRole удаляет кастомную роль. Пользователи с этой ролью переключаются на GUEST.
+func (s *Service) DeleteRole(ctx context.Context, workspaceID, roleID, assignedBy string) error {
 	role, err := s.repo.GetRoleByID(ctx, roleID)
 	if err != nil || role == nil {
 		return permRepo.ErrRoleNotFound
@@ -154,12 +157,30 @@ func (s *Service) DeleteRole(ctx context.Context, roleID string) error {
 	if role.IsSystem {
 		return ErrRoleSystem
 	}
-	n, err := s.repo.CountAssignmentsByRole(ctx, roleID)
+	if role.WorkspaceID != workspaceID {
+		return permRepo.ErrRoleNotFound
+	}
+	assignments, err := s.repo.ListAssignmentsByRole(ctx, roleID)
 	if err != nil {
 		return err
 	}
-	if n > 0 {
-		return ErrRoleHasUsers
+	if len(assignments) > 0 && s.workspaceRepo == nil {
+		return errors.New("cannot delete role with assigned users: workspace repo not configured")
+	}
+	wsID, _ := uuid.Parse(workspaceID)
+	for _, a := range assignments {
+		uid, _ := uuid.Parse(a.UserID)
+		if s.workspaceRepo != nil {
+			_ = s.workspaceRepo.SetUserWorkspaceRole(ctx, wsID, uid, defaultRoleOnDelete)
+		}
+		_ = s.repo.DeleteUserRoleAssignment(ctx, a.UserID, roleID, a.WorkspaceID)
+		_, _ = s.enforcer.RemoveGroupingPolicy("user:"+a.UserID, "role:"+role.Name, a.WorkspaceID)
+		if err := s.AssignRoleByName(ctx, a.UserID, a.WorkspaceID, defaultRoleOnDelete, assignedBy); err != nil {
+			// Логируем, но продолжаем: пользователь уже снят с кастомной роли
+		}
+	}
+	if err := s.enforcer.SavePolicy(); err != nil {
+		return err
 	}
 	oldPolicies, _ := s.enforcer.GetFilteredPolicy(0, "role:"+role.Name)
 	for _, p := range oldPolicies {
@@ -171,6 +192,15 @@ func (s *Service) DeleteRole(ctx context.Context, roleID string) error {
 		return err
 	}
 	return s.repo.DeleteRole(ctx, roleID)
+}
+
+// AssignRoleByName назначает роль пользователю по имени (OWNER, ADMIN, MEMBER, GUEST).
+func (s *Service) AssignRoleByName(ctx context.Context, userID, workspaceID, roleName, assignedBy string) error {
+	role, err := s.repo.GetRoleByName(ctx, workspaceID, roleName)
+	if err != nil || role == nil {
+		return permRepo.ErrRoleNotFound
+	}
+	return s.AssignRole(ctx, userID, role.ID, workspaceID, assignedBy)
 }
 
 // AssignRole назначает роль пользователю и добавляет групповую политику в Casbin.
@@ -274,15 +304,27 @@ func (s *Service) GetUserPermissions(ctx context.Context, userID, workspaceID st
 }
 
 // GetEffectivePermissions возвращает все права пользователя в workspace (из ролей + индивидуальные) для UI.
+// Override semantics: если у пользователя есть хотя бы одна кастомная роль, используются ТОЛЬКО права
+// кастомных ролей (системные роли игнорируются). Иначе — объединение прав всех ролей.
 func (s *Service) GetEffectivePermissions(ctx context.Context, userID, workspaceID string) ([]string, error) {
 	seen := make(map[string]bool)
-	// From roles (Casbin policies for user's roles in this domain)
-	roles, err := s.GetUserRoles(ctx, userID, workspaceID)
+	rolesFull, err := s.GetUserRolesFull(ctx, userID, workspaceID)
 	if err != nil {
 		return nil, err
 	}
-	for _, roleName := range roles {
-		policies, _ := s.enforcer.GetFilteredPolicy(0, "role:"+roleName)
+	hasCustomRole := false
+	for _, r := range rolesFull {
+		if !r.IsSystem {
+			hasCustomRole = true
+			break
+		}
+	}
+	// From roles (Casbin policies)
+	for _, role := range rolesFull {
+		if hasCustomRole && role.IsSystem {
+			continue // override: игнорируем системные роли при наличии кастомных
+		}
+		policies, _ := s.enforcer.GetFilteredPolicy(0, "role:"+role.Name)
 		for _, p := range policies {
 			if len(p) >= 4 && p[1] == workspaceID {
 				perm := p[2] + ":" + p[3]
@@ -423,6 +465,11 @@ func (s *Service) SeedSystemPoliciesForWorkspace(workspaceID string) {
 	s.addSystemPoliciesForWorkspace(workspaceID)
 }
 
+// SavePolicy сохраняет политики Casbin (адаптер/файл).
+func (s *Service) SavePolicy() error {
+	return s.enforcer.SavePolicy()
+}
+
 func (s *Service) addSystemPoliciesForWorkspace(workspaceID string) {
 	systemRoles := []string{"role:OWNER", "role:ADMIN", "role:MEMBER", "role:GUEST"}
 	for _, sub := range systemRoles {
@@ -458,20 +505,45 @@ var (
 		{"habits:journal", "create"}, {"habits:journal", "read"}, {"habits:journal", "update"}, {"habits:journal", "delete"},
 		{"projects:project", "create"}, {"projects:project", "read"}, {"projects:project", "update"}, {"projects:project", "delete"},
 		{"projects:entity", "attach"}, {"projects:entity", "detach"},
-		{"workspace:member", "invite"}, {"workspace:member", "remove"}, {"workspace:role", "manage"}, {"workspace:module", "manage"},
+		{"workspace:member", "invite"}, {"workspace:member", "remove"}, {"workspace:role", "manage"},
+		{"workspace:module", "read"}, {"workspace:module", "manage"},
 	}
 	memberBasePolicies = []objAct{
 		{"crm:deal", "create"}, {"crm:deal", "read"}, {"crm:deal", "update"}, {"crm:deal", "move"},
 		{"crm:contact", "create"}, {"crm:contact", "read"}, {"crm:contact", "update"},
 		{"crm:company", "create"}, {"crm:company", "read"}, {"crm:company", "update"},
-		{"habits:habit", "create"}, {"habits:habit", "read"}, {"habits:habit", "update"}, {"habits:habit", "complete"},
+		{"habits:habit", "create"}, {"habits:habit", "read"}, {"habits:habit", "update"}, {"habits:habit", "delete"}, {"habits:habit", "complete"},
 		{"habits:journal", "create"}, {"habits:journal", "read"}, {"habits:journal", "update"},
 		{"projects:project", "create"}, {"projects:project", "read"}, {"projects:project", "update"},
-		{"workspace:member", "invite"}, {"workspace:module", "manage"},
+		{"workspace:member", "invite"},
+		{"workspace:module", "read"}, {"workspace:module", "manage"},
 	}
 	guestBasePolicies = []objAct{
 		{"crm:deal", "read"}, {"crm:contact", "read"}, {"crm:company", "read"},
 		{"habits:habit", "read"}, {"habits:journal", "read"},
 		{"projects:project", "read"},
+		{"workspace:module", "read"}, // просмотр списка модулей (GET /modules)
 	}
 )
+
+// SystemRolePermissions описывает права системной роли.
+type SystemRolePermissions struct {
+	Role        string   `json:"role"`
+	Permissions []string `json:"permissions"` // "module:entity:action"
+}
+
+// GetSystemRolePermissions возвращает права базовых системных ролей (OWNER, ADMIN, MEMBER, GUEST).
+func (s *Service) GetSystemRolePermissions(ctx context.Context) map[string][]string {
+	out := make(map[string][]string)
+	for _, p := range ownerAdminPolicies {
+		out["OWNER"] = append(out["OWNER"], p.obj+":"+p.act)
+		out["ADMIN"] = append(out["ADMIN"], p.obj+":"+p.act)
+	}
+	for _, p := range memberBasePolicies {
+		out["MEMBER"] = append(out["MEMBER"], p.obj+":"+p.act)
+	}
+	for _, p := range guestBasePolicies {
+		out["GUEST"] = append(out["GUEST"], p.obj+":"+p.act)
+	}
+	return out
+}

@@ -40,6 +40,8 @@ func (h *Handler) RegisterRoutes(r *gin.RouterGroup) {
 	r.PUT(RouteUpdate, h.Update)
 	r.DELETE(RouteDelete, h.Delete)
 	r.GET(RouteMembers, h.GetMembers)
+	r.DELETE(RouteMemberOne, h.RemoveMember)
+	r.PATCH(RouteMemberOne, h.UpdateMemberRole)
 	r.POST(RouteSwitch, h.Switch)
 	r.GET(RouteModules, h.GetModules)
 	r.POST(RouteModules, h.EnableModule)
@@ -70,7 +72,6 @@ func (h *Handler) List(c *gin.Context) {
 		h.responder.InternalServerError(c, "Failed to list workspaces")
 		return
 	}
-
 	h.responder.SuccessWithData(c, gin.H{"workspaces": workspaces})
 }
 
@@ -106,7 +107,6 @@ func (h *Handler) Create(c *gin.Context) {
 		h.responder.InternalServerError(c, "Failed to create workspace")
 		return
 	}
-
 	h.responder.Created(c, "Workspace created successfully", workspace)
 }
 
@@ -142,7 +142,6 @@ func (h *Handler) Get(c *gin.Context) {
 		}
 		return
 	}
-
 	h.responder.SuccessWithData(c, gin.H{"workspace": workspace})
 }
 
@@ -207,8 +206,126 @@ func (h *Handler) Delete(c *gin.Context) {
 }
 
 func (h *Handler) GetMembers(c *gin.Context) {
-	// TODO: implement
-	c.JSON(200, gin.H{"message": "get members"})
+	userID, ok := middleware.GetUserIDFromGin(c)
+	if !ok {
+		h.responder.Unauthorized(c, "Authentication required")
+		return
+	}
+	roleVal, _ := c.Get(middleware.GinRoleKey)
+	userRole := model.UserRoleUser
+	if roleVal != nil {
+		userRole = roleVal.(model.UserRole)
+	}
+
+	workspaceID := c.Param("workspaceId")
+	if workspaceID == "" {
+		h.responder.BadRequest(c, "Workspace ID required")
+		return
+	}
+
+	list, err := h.service.ListMembers(c.Request.Context(), workspaceID, userID, userRole)
+	if err != nil {
+		if err == workspaceService.ErrAccessDenied {
+			h.responder.Forbidden(c, "Access denied to this workspace")
+			return
+		}
+		h.responder.InternalServerError(c, "Failed to list members")
+		return
+	}
+
+	h.responder.SuccessWithData(c, gin.H{"members": list})
+}
+
+func (h *Handler) RemoveMember(c *gin.Context) {
+	userID, ok := middleware.GetUserIDFromGin(c)
+	if !ok {
+		h.responder.Unauthorized(c, "Authentication required")
+		return
+	}
+	roleVal, _ := c.Get(middleware.GinRoleKey)
+	userRole := model.UserRoleUser
+	if roleVal != nil {
+		userRole = roleVal.(model.UserRole)
+	}
+
+	workspaceID := c.Param("workspaceId")
+	targetUserID := c.Param("userId")
+	if workspaceID == "" || targetUserID == "" {
+		h.responder.BadRequest(c, "Workspace ID and user ID required")
+		return
+	}
+
+	err := h.service.RemoveMember(c.Request.Context(), workspaceID, userID, targetUserID, userRole)
+	if err != nil {
+		switch err {
+		case workspaceService.ErrAccessDenied:
+			h.responder.Forbidden(c, "Access denied")
+		case workspaceService.ErrMemberNotFound:
+			h.responder.NotFound(c, "Member not found")
+		case workspaceService.ErrCannotRemoveSelf:
+			h.responder.BadRequest(c, "Cannot remove yourself from workspace")
+		case workspaceService.ErrCannotRemoveOwner:
+			h.responder.BadRequest(c, "Cannot remove the sole owner")
+		default:
+			h.responder.InternalServerError(c, "Failed to remove member")
+		}
+		return
+	}
+	h.responder.SuccessWithMessage(c, "Member removed successfully")
+}
+
+type updateMemberRoleRequest struct {
+	Role   string `json:"role"`   // OWNER, ADMIN, MEMBER, GUEST
+	RoleID string `json:"roleId"` // UUID кастомной роли (приоритет над role)
+}
+
+func (h *Handler) UpdateMemberRole(c *gin.Context) {
+	userID, ok := middleware.GetUserIDFromGin(c)
+	if !ok {
+		h.responder.Unauthorized(c, "Authentication required")
+		return
+	}
+	roleVal, _ := c.Get(middleware.GinRoleKey)
+	userRole := model.UserRoleUser
+	if roleVal != nil {
+		userRole = roleVal.(model.UserRole)
+	}
+
+	workspaceID := c.Param("workspaceId")
+	targetUserID := c.Param("userId")
+	if workspaceID == "" || targetUserID == "" {
+		h.responder.BadRequest(c, "Workspace ID and user ID required")
+		return
+	}
+
+	var req updateMemberRoleRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.responder.BadRequest(c, "Invalid request body")
+		return
+	}
+	if req.Role == "" && req.RoleID == "" {
+		h.responder.BadRequest(c, "role or roleId is required")
+		return
+	}
+
+	err := h.service.UpdateMemberRole(c.Request.Context(), workspaceID, userID, targetUserID, req.Role, req.RoleID, userRole)
+	if err != nil {
+		switch err {
+		case workspaceService.ErrAccessDenied:
+			h.responder.Forbidden(c, "Access denied")
+		case workspaceService.ErrMemberNotFound:
+			h.responder.NotFound(c, "Member not found")
+		case workspaceService.ErrCannotChangeOwnRole:
+			h.responder.BadRequest(c, "Cannot change your own role")
+		case workspaceService.ErrCannotChangeOwner:
+			h.responder.BadRequest(c, "Cannot change role of the sole owner")
+		default:
+			h.responder.InternalServerError(c, "Failed to update member role")
+		}
+		return
+	}
+
+	h.responder.SuccessWithMessage(c, "Member role updated successfully")
 }
 
 func (h *Handler) GetCurrent(c *gin.Context) {
@@ -226,7 +343,7 @@ func (h *Handler) GetCurrent(c *gin.Context) {
 	workspaceID, err := h.service.GetCurrentWorkspace(c.Request.Context(), userID, userRole)
 	if err != nil {
 		if err == workspaceService.ErrNoActiveWorkspace {
-			h.responder.NotFound(c, "No workspace selected")
+			h.responder.SuccessWithData(c, gin.H{"workspace": nil})
 			return
 		}
 		h.responder.InternalServerError(c, "Failed to get current workspace")
@@ -235,10 +352,14 @@ func (h *Handler) GetCurrent(c *gin.Context) {
 
 	ws, err := h.service.Get(c.Request.Context(), workspaceID, userID, userRole)
 	if err != nil {
+		if err == workspaceService.ErrAccessDenied || err == workspaceService.ErrWorkspaceNotFound {
+			_ = h.service.UnsetCurrentWorkspace(c.Request.Context(), userID)
+			h.responder.SuccessWithData(c, gin.H{"workspace": nil})
+			return
+		}
 		h.responder.InternalServerError(c, "Failed to get workspace")
 		return
 	}
-
 	h.responder.SuccessWithData(c, gin.H{"workspace": ws})
 }
 
@@ -271,7 +392,6 @@ func (h *Handler) Switch(c *gin.Context) {
 		h.responder.InternalServerError(c, "Failed to switch workspace")
 		return
 	}
-
 	h.responder.SuccessWithMessage(c, "Workspace switched successfully")
 }
 
@@ -307,6 +427,12 @@ func (h *Handler) GetModules(c *gin.Context) {
 		return
 	}
 
+	// При отсутствии workspace:module:read PermissionMiddleware ставит флаг вместо 403.
+	if v, _ := c.Get(middleware.GinNoWorkspaceModuleReadKey); v == true {
+		h.responder.SuccessWithData(c, gin.H{"modules": []interface{}{}})
+		return
+	}
+
 	list, err := h.service.GetWorkspaceModules(c.Request.Context(), workspaceID, userID, userRole)
 	if err != nil {
 		if err == workspaceService.ErrAccessDenied {
@@ -316,7 +442,6 @@ func (h *Handler) GetModules(c *gin.Context) {
 		h.responder.InternalServerError(c, "Failed to get workspace modules")
 		return
 	}
-
 	h.responder.SuccessWithData(c, gin.H{"modules": list})
 }
 
@@ -365,7 +490,6 @@ func (h *Handler) EnableModule(c *gin.Context) {
 		h.responder.InternalServerError(c, "Failed to enable module")
 		return
 	}
-
 	h.responder.SuccessWithMessage(c, "Module enabled successfully")
 }
 
@@ -406,6 +530,5 @@ func (h *Handler) DisableModule(c *gin.Context) {
 		h.responder.InternalServerError(c, "Failed to disable module")
 		return
 	}
-
 	h.responder.SuccessWithMessage(c, "Module disabled successfully")
 }

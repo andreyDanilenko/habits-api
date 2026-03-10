@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"backend/internal/model"
@@ -29,10 +30,10 @@ func (r *Repository) List(ctx context.Context, userID uuid.UUID) ([]model.Worksp
 		FROM workspaces w
 		INNER JOIN user_workspaces uw ON w.id = uw.workspace_id
 		WHERE uw.user_id = $1
-		ORDER BY w.created_at DESC
+		ORDER BY (w.owner_id = $2) DESC, w.created_at DESC
 	`
 
-	rows, err := r.db.QueryContext(ctx, query, userID)
+	rows, err := r.db.QueryContext(ctx, query, userID, userID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query workspaces: %w", err)
 	}
@@ -501,4 +502,138 @@ func (r *Repository) ListAllModulesWithWorkspaceState(ctx context.Context, works
 		return nil, err
 	}
 	return list, nil
+}
+
+// ListMembers возвращает участников workspace (user_workspaces + users).
+func (r *Repository) ListMembers(ctx context.Context, workspaceID uuid.UUID) ([]model.WorkspaceMember, error) {
+	query := `
+		SELECT u.id, u.email, COALESCE(u.name, '') AS name,
+		       TRIM(uw.role) AS system_role,
+		       uw.created_at
+		FROM user_workspaces uw
+		JOIN users u ON u.id = uw.user_id
+		WHERE uw.workspace_id = $1
+		ORDER BY CASE UPPER(TRIM(uw.role))
+			WHEN 'OWNER' THEN 1
+			WHEN 'ADMIN' THEN 2
+			WHEN 'MEMBER' THEN 3
+			WHEN 'GUEST' THEN 4
+			ELSE 5
+		END, u.email
+	`
+	rows, err := r.db.QueryContext(ctx, query, workspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("list members: %w", err)
+	}
+	defer rows.Close()
+
+	var list []model.WorkspaceMember
+	for rows.Next() {
+		var m model.WorkspaceMember
+		var createdAt time.Time
+		var role string
+		err := rows.Scan(&m.ID, &m.Email, &m.Name, &role, &createdAt)
+		if err != nil {
+			return nil, fmt.Errorf("scan member: %w", err)
+		}
+		roleUpper := strings.ToUpper(role)
+		switch roleUpper {
+		case "OWNER", "ADMIN", "MEMBER", "GUEST":
+			m.SystemRole = roleUpper
+		default:
+			m.SystemRole = role // кастомная роль — сохраняем имя как есть
+		}
+		m.JoinedAt = createdAt.Format(time.RFC3339)
+		list = append(list, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return list, nil
+}
+
+// RemoveMember удаляет участника из workspace (user_role_assignments, затем user_workspaces).
+func (r *Repository) RemoveMember(ctx context.Context, workspaceID, userID uuid.UUID) error {
+	_, err := r.db.ExecContext(ctx,
+		`DELETE FROM user_role_assignments WHERE workspace_id = $1 AND user_id = $2`,
+		workspaceID, userID,
+	)
+	if err != nil {
+		return fmt.Errorf("remove member role assignments: %w", err)
+	}
+	res, err := r.db.ExecContext(ctx,
+		`DELETE FROM user_workspaces WHERE workspace_id = $1 AND user_id = $2`,
+		workspaceID, userID,
+	)
+	if err != nil {
+		return fmt.Errorf("remove member from workspace: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// UpdateUserWorkspaceRole обновляет роль участника в user_workspaces (системная роль).
+func (r *Repository) UpdateUserWorkspaceRole(ctx context.Context, workspaceID, userID uuid.UUID, role string) error {
+	role = strings.ToUpper(strings.TrimSpace(role))
+	if role != "OWNER" && role != "ADMIN" && role != "MEMBER" && role != "GUEST" {
+		return fmt.Errorf("invalid system role: %s", role)
+	}
+	return r.setUserWorkspaceRole(ctx, workspaceID, userID, role)
+}
+
+// SetUserWorkspaceRole устанавливает роль участника (системная или кастомная по имени).
+// Валидация — в сервисе.
+func (r *Repository) SetUserWorkspaceRole(ctx context.Context, workspaceID, userID uuid.UUID, roleName string) error {
+	roleName = strings.TrimSpace(roleName)
+	if roleName == "" {
+		return fmt.Errorf("role name cannot be empty")
+	}
+	return r.setUserWorkspaceRole(ctx, workspaceID, userID, roleName)
+}
+
+func (r *Repository) setUserWorkspaceRole(ctx context.Context, workspaceID, userID uuid.UUID, role string) error {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE user_workspaces SET role = $3 WHERE workspace_id = $1 AND user_id = $2`,
+		workspaceID, userID, role,
+	)
+	if err != nil {
+		return fmt.Errorf("update user workspace role: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// CountOwners возвращает количество участников с ролью OWNER в workspace.
+func (r *Repository) CountOwners(ctx context.Context, workspaceID uuid.UUID) (int, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM user_workspaces WHERE workspace_id = $1 AND UPPER(TRIM(role)) = 'OWNER'`,
+		workspaceID,
+	).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count owners: %w", err)
+	}
+	return n, nil
+}
+
+// GetUserWorkspaceRole возвращает роль пользователя в workspace (user_workspaces; владелец тоже в user_workspaces).
+func (r *Repository) GetUserWorkspaceRole(ctx context.Context, workspaceID, userID uuid.UUID) (string, error) {
+	var role string
+	err := r.db.QueryRowContext(ctx,
+		`SELECT UPPER(TRIM(role)) FROM user_workspaces WHERE workspace_id = $1 AND user_id = $2`,
+		workspaceID, userID,
+	).Scan(&role)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil
+		}
+		return "", fmt.Errorf("get user workspace role: %w", err)
+	}
+	return role, nil
 }

@@ -21,3 +21,12 @@ type UpdateWorkspaceDto struct {
 	Description *string `json:"description,omitempty"`
 	Color       *string `json:"color,omitempty"`
 }
+
+// WorkspaceMember — участник workspace для списка на UI.
+type WorkspaceMember struct {
+	ID         string `json:"id"`
+	Email      string `json:"email"`
+	Name       string `json:"name"`
+	SystemRole string `json:"systemRole"`
+	JoinedAt   string `json:"joinedAt"`
+}

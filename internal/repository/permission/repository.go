@@ -228,11 +228,13 @@ func (r *Repository) ListUserRoleAssignments(ctx context.Context, userID, worksp
 }
 
 // CreateUserRoleAssignment создаёт назначение роли пользователю.
+// Идемпотентно: если назначение уже есть (duplicate key), возвращает nil без ошибки.
 func (r *Repository) CreateUserRoleAssignment(ctx context.Context, a *model.UserRoleAssignment) error {
 	id := uuid.New().String()
 	query := `
 		INSERT INTO user_role_assignments (id, user_id, role_id, workspace_id, assigned_by, assigned_at)
 		VALUES ($1, $2, $3, $4, $5, NOW())
+		ON CONFLICT (user_id, role_id, workspace_id) DO NOTHING
 	`
 	assignedBy := sql.NullString{}
 	if a.AssignedBy != "" {
@@ -350,6 +352,35 @@ func (r *Repository) CountAssignmentsByRole(ctx context.Context, roleID string) 
 		return 0, fmt.Errorf("count assignments: %w", err)
 	}
 	return n, nil
+}
+
+// ListAssignmentsByRole возвращает все назначения для роли (user_id, workspace_id).
+func (r *Repository) ListAssignmentsByRole(ctx context.Context, roleID string) ([]model.UserRoleAssignment, error) {
+	query := `
+		SELECT ura.id, ura.user_id, ura.role_id, ura.workspace_id, ura.assigned_by, ura.assigned_at
+		FROM user_role_assignments ura
+		WHERE ura.role_id = $1
+	`
+	rows, err := r.db.QueryContext(ctx, query, roleID)
+	if err != nil {
+		return nil, fmt.Errorf("list assignments by role: %w", err)
+	}
+	defer rows.Close()
+	var list []model.UserRoleAssignment
+	for rows.Next() {
+		var a model.UserRoleAssignment
+		var assignedAt time.Time
+		var assignedBy sql.NullString
+		if err := rows.Scan(&a.ID, &a.UserID, &a.RoleID, &a.WorkspaceID, &assignedBy, &assignedAt); err != nil {
+			return nil, fmt.Errorf("scan assignment: %w", err)
+		}
+		if assignedBy.Valid {
+			a.AssignedBy = assignedBy.String
+		}
+		a.AssignedAt = assignedAt.Format(time.RFC3339)
+		list = append(list, a)
+	}
+	return list, rows.Err()
 }
 
 // ListDistinctWorkspaceIDs возвращает уникальные workspace_id из workspace_roles (для загрузки системных политик).

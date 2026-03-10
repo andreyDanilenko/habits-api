@@ -1,11 +1,13 @@
 package habits
 
 import (
+	"strconv"
+	"time"
+
 	"backend/internal/middleware"
 	"backend/internal/model"
 	habitsService "backend/internal/service/habits"
 	"backend/pkg/response"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
@@ -44,6 +46,7 @@ func (h *Handler) RegisterRoutes(r *gin.RouterGroup) {
 		habits.GET(RouteStats, h.GetStats)
 		habits.GET(RouteCompletions, h.GetCompletions)
 		habits.GET(RouteCalendar, h.GetCalendar)
+		habits.GET(RouteActivities, h.ListActivities)
 	}
 }
 
@@ -186,6 +189,10 @@ func (h *Handler) Delete(c *gin.Context) {
 	if err != nil {
 		if err == habitsService.ErrHabitNotFound {
 			h.responder.NotFound(c, "Habit not found")
+			return
+		}
+		if err == habitsService.ErrCannotDelete {
+			h.responder.Forbidden(c, "Cannot delete another user's habit")
 			return
 		}
 		h.responder.InternalServerError(c, "Failed to delete habit")
@@ -387,6 +394,38 @@ func (h *Handler) GetCalendar(c *gin.Context) {
 	}
 
 	h.responder.SuccessWithData(c, gin.H{"days": cal.Days})
+}
+
+func (h *Handler) ListActivities(c *gin.Context) {
+	_, ok := h.requireWorkspace(c)
+	if !ok {
+		return
+	}
+	workspaceIDParam := c.Param("workspaceId")
+	limit := parseInt(c.Query("limit"), 20)
+	offset := parseInt(c.Query("offset"), 0)
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+
+	list, total, err := h.service.ListActivities(c.Request.Context(), workspaceIDParam, limit, offset)
+	if err != nil {
+		h.responder.InternalServerError(c, "Failed to list activities")
+		return
+	}
+
+	h.responder.SuccessWithData(c, gin.H{"activities": list, "total": total})
+}
+
+func parseInt(s string, defaultVal int) int {
+	if s == "" {
+		return defaultVal
+	}
+	n, _ := strconv.Atoi(s)
+	if n <= 0 {
+		return defaultVal
+	}
+	return n
 }
 
 func parseDate(s string) (time.Time, error) {

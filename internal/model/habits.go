@@ -16,6 +16,7 @@ type Habit struct {
 	IsActive      bool   `json:"isActive" db:"is_active"`
 	UserID        string `json:"userId" db:"user_id"`
 	WorkspaceID   string `json:"workspaceId" db:"workspace_id"`
+	OwnerName     string `json:"ownerName" db:"-"` // Имя владельца (для бейджа), заполняется при выборке. Всегда отправляется ("" если нет).
 	CreatedAt     string `json:"createdAt" db:"created_at"`
 	UpdatedAt     string `json:"updatedAt" db:"updated_at"`
 }
@@ -124,6 +125,7 @@ type HabitHistory struct {
 type Activity struct {
 	ID          string `json:"id" db:"id"`
 	UserID      string `json:"userId" db:"user_id"`
+	UserName    string `json:"userName,omitempty" db:"-"` // Имя пользователя (кто выполнил), заполняется при выборке
 	WorkspaceID string `json:"workspaceId" db:"workspace_id"`
 	Type        string `json:"type" db:"type"`              // HABIT_CREATED, HABIT_UPDATED, HABIT_DELETED, HABIT_COMPLETED
 	EntityType  string `json:"entityType" db:"entity_type"` // habit, completion, workspace

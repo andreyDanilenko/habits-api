@@ -36,8 +36,8 @@ func (r *CompletionRepository) Create(ctx context.Context, habitID, userID uuid.
 
 	var workspaceID uuid.UUID
 	err := r.db.QueryRowContext(ctx,
-		"SELECT workspace_id FROM habits WHERE id = $1 AND user_id = $2",
-		habitID, userID,
+		"SELECT workspace_id FROM habits WHERE id = $1",
+		habitID,
 	).Scan(&workspaceID)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -190,12 +190,14 @@ func (r *CompletionRepository) CountByHabit(ctx context.Context, habitID, userID
 	return n, err
 }
 
-// GetCompletionMap возвращает мапу dateKey -> habitID -> true для быстрого поиска completions
-func (r *CompletionRepository) GetCompletionMap(ctx context.Context, userID, workspaceID uuid.UUID, startDate, endDate time.Time) (map[string]map[uuid.UUID]bool, error) {
+// GetCompletionMap возвращает мапу dateKey -> habitID -> true для completions в workspace.
+// Показывает завершения по владельцу привычки (когда владелец выполнил свою привычку).
+func (r *CompletionRepository) GetCompletionMap(ctx context.Context, workspaceID uuid.UUID, startDate, endDate time.Time) (map[string]map[uuid.UUID]bool, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT habit_id, date FROM habit_completions
-		WHERE user_id = $1 AND workspace_id = $2 AND date BETWEEN $3 AND $4
-	`, userID, workspaceID, NormalizeDate(startDate), NormalizeDate(endDate))
+		SELECT c.habit_id, c.date FROM habit_completions c
+		JOIN habits h ON h.id = c.habit_id AND h.user_id = c.user_id
+		WHERE h.workspace_id = $1 AND c.date BETWEEN $2 AND $3
+	`, workspaceID, NormalizeDate(startDate), NormalizeDate(endDate))
 	if err != nil {
 		return nil, fmt.Errorf("failed to query completions: %w", err)
 	}

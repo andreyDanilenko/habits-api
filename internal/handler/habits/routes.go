@@ -11,4 +11,5 @@ const (
 	RouteStats       = "/:habitId/stats"
 	RouteCompletions = "/completions"
 	RouteCalendar    = "/calendar"
+	RouteActivities  = "/activities"
 )

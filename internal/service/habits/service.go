@@ -6,7 +6,8 @@ import (
 	"time"
 
 	"backend/internal/model"
-	"backend/internal/repository/habits"
+	habitsRepo "backend/internal/repository/habits"
+	workspaceRepo "backend/internal/repository/workspace"
 
 	"github.com/google/uuid"
 )
@@ -14,14 +15,16 @@ import (
 var (
 	ErrHabitNotFound   = errors.New("habit not found")
 	ErrWorkspaceNeeded = errors.New("workspace not selected")
+	ErrCannotDelete    = errors.New("cannot delete another user's habit")
 )
 
 type Service struct {
-	repo *habits.Repository
+	repo    *habitsRepo.Repository
+	wsRepo  *workspaceRepo.Repository
 }
 
-func NewService(repo *habits.Repository) *Service {
-	return &Service{repo: repo}
+func NewService(repo *habitsRepo.Repository, wsRepo *workspaceRepo.Repository) *Service {
+	return &Service{repo: repo, wsRepo: wsRepo}
 }
 
 func (s *Service) List(ctx context.Context, workspaceID string, targetDate *time.Time) ([]model.Habit, error) {
@@ -47,86 +50,134 @@ func (s *Service) Create(ctx context.Context, dto model.CreateHabitDto, userID, 
 	if err != nil {
 		return nil, err
 	}
-	return s.repo.Create(ctx, dto, uid, wid)
+	habit, err := s.repo.Create(ctx, dto, uid, wid)
+	if err != nil {
+		return nil, err
+	}
+	hid, _ := uuid.Parse(habit.ID)
+	_ = s.repo.CreateActivity(ctx, uid, wid, hid, habitsRepo.ActivityTypeHabitCreated,
+		"Создана привычка \""+habit.Title+"\"", "➕")
+	return habit, nil
 }
 
+// Get возвращает привычку по id и workspace. Любой участник workspace может просматривать любую привычку.
 func (s *Service) Get(ctx context.Context, habitID, userID, workspaceID string) (*model.Habit, error) {
 	hid, err := uuid.Parse(habitID)
 	if err != nil {
 		return nil, err
 	}
-	uid, err := uuid.Parse(userID)
+	wid, err := uuid.Parse(workspaceID)
 	if err != nil {
 		return nil, err
 	}
-	h, err := s.repo.Get(ctx, hid, uid)
+	h, err := s.repo.GetByIDAndWorkspace(ctx, hid, wid)
 	if err != nil || h == nil {
-		return nil, ErrHabitNotFound
-	}
-	if workspaceID != "" && h.WorkspaceID != workspaceID {
 		return nil, ErrHabitNotFound
 	}
 	return h, nil
 }
 
 func (s *Service) Update(ctx context.Context, habitID string, dto model.UpdateHabitDto, userID, workspaceID string) (*model.Habit, error) {
-	_, err := s.Get(ctx, habitID, userID, workspaceID)
+	habit, err := s.Get(ctx, habitID, userID, workspaceID)
 	if err != nil {
 		return nil, err
 	}
-	hid, _ := uuid.Parse(habitID)
 	uid, _ := uuid.Parse(userID)
-	return s.repo.Update(ctx, hid, uid, dto)
+	if habit.UserID != uid.String() {
+		return nil, ErrHabitNotFound // только владелец может редактировать
+	}
+	hid, _ := uuid.Parse(habitID)
+	wid, _ := uuid.Parse(workspaceID)
+	updated, err := s.repo.Update(ctx, hid, uid, dto)
+	if err != nil {
+		return nil, err
+	}
+	_ = s.repo.CreateActivity(ctx, uid, wid, hid, habitsRepo.ActivityTypeHabitUpdated,
+		"Обновлена привычка \""+updated.Title+"\"", "✏️")
+	return updated, nil
 }
 
 func (s *Service) Delete(ctx context.Context, habitID, userID, workspaceID string) error {
-	_, err := s.Get(ctx, habitID, userID, workspaceID)
+	habit, err := s.Get(ctx, habitID, userID, workspaceID)
 	if err != nil {
 		return err
 	}
-	hid, _ := uuid.Parse(habitID)
 	uid, _ := uuid.Parse(userID)
-	return s.repo.Delete(ctx, hid, uid)
+	wid, _ := uuid.Parse(workspaceID)
+	habitOwnerID, _ := uuid.Parse(habit.UserID)
+
+	// Удалять может только владелец привычки или владелец workspace
+	if habit.UserID != uid.String() {
+		isOwner, err := s.wsRepo.IsOwner(ctx, wid, uid)
+		if err != nil || !isOwner {
+			return ErrCannotDelete
+		}
+	}
+
+	hid, _ := uuid.Parse(habitID)
+	if err := s.repo.Delete(ctx, hid, habitOwnerID); err != nil {
+		return err
+	}
+	_ = s.repo.CreateActivity(ctx, habitOwnerID, wid, hid, habitsRepo.ActivityTypeHabitDeleted,
+		"Удалена привычка \""+habit.Title+"\"", "🗑️")
+	return nil
 }
 
 func (s *Service) Complete(ctx context.Context, habitID, userID, workspaceID string, date time.Time, notes string, rating interface{}, completionTime *string) (*model.HabitCompletion, error) {
-	_, err := s.Get(ctx, habitID, userID, workspaceID)
+	habit, err := s.Get(ctx, habitID, userID, workspaceID)
 	if err != nil {
 		return nil, err
 	}
 	hid, _ := uuid.Parse(habitID)
 	uid, _ := uuid.Parse(userID)
-	return s.repo.Complete(ctx, hid, uid, date, notes, rating, completionTime)
+	wid, _ := uuid.Parse(workspaceID)
+	// Завершать может любой участник workspace (в т.ч. чужую привычку)
+	completion, err := s.repo.Complete(ctx, hid, uid, date, notes, rating, completionTime)
+	if err != nil {
+		return nil, err
+	}
+	_ = s.repo.CreateCompletionActivity(ctx, uid, wid, hid,
+		"Завершена привычка \""+habit.Title+"\"", "✅")
+	return completion, nil
 }
 
 func (s *Service) Toggle(ctx context.Context, habitID, userID, workspaceID string, date time.Time) (bool, *model.HabitCompletion, error) {
-	_, err := s.Get(ctx, habitID, userID, workspaceID)
+	habit, err := s.Get(ctx, habitID, userID, workspaceID)
 	if err != nil {
 		return false, nil, err
 	}
 	hid, _ := uuid.Parse(habitID)
 	uid, _ := uuid.Parse(userID)
-	return s.repo.Toggle(ctx, hid, uid, date)
+	wid, _ := uuid.Parse(workspaceID)
+	added, completion, err := s.repo.Toggle(ctx, hid, uid, date)
+	if err != nil {
+		return false, nil, err
+	}
+	if added {
+		_ = s.repo.CreateCompletionActivity(ctx, uid, wid, hid,
+			"Завершена привычка \""+habit.Title+"\"", "✅")
+	}
+	return added, completion, nil
 }
 
 func (s *Service) GetStats(ctx context.Context, habitID, userID, workspaceID string) (*model.HabitStats, error) {
-	_, err := s.Get(ctx, habitID, userID, workspaceID)
+	habit, err := s.Get(ctx, habitID, userID, workspaceID)
 	if err != nil {
 		return nil, err
 	}
 	hid, _ := uuid.Parse(habitID)
-	uid, _ := uuid.Parse(userID)
-	return s.repo.GetStats(ctx, hid, uid)
+	habitOwnerID, _ := uuid.Parse(habit.UserID)
+	return s.repo.GetStats(ctx, hid, habitOwnerID)
 }
 
 func (s *Service) GetCompletions(ctx context.Context, habitID, userID, workspaceID string, start, end time.Time) ([]model.HabitCompletion, error) {
-	_, err := s.Get(ctx, habitID, userID, workspaceID)
+	habit, err := s.Get(ctx, habitID, userID, workspaceID)
 	if err != nil {
 		return nil, err
 	}
 	hid, _ := uuid.Parse(habitID)
-	uid, _ := uuid.Parse(userID)
-	return s.repo.GetCompletions(ctx, hid, uid, start, end)
+	habitOwnerID, _ := uuid.Parse(habit.UserID)
+	return s.repo.GetCompletions(ctx, hid, habitOwnerID, start, end)
 }
 
 func (s *Service) GetAllCompletions(ctx context.Context, userID, workspaceID string, start, end time.Time) ([]model.HabitCompletion, error) {
@@ -157,4 +208,15 @@ func (s *Service) GetCalendar(ctx context.Context, userID, workspaceID string, s
 		return nil, err
 	}
 	return s.repo.GetCalendar(ctx, uid, wid, start, end)
+}
+
+func (s *Service) ListActivities(ctx context.Context, workspaceID string, limit, offset int) ([]model.Activity, int, error) {
+	if workspaceID == "" {
+		return nil, 0, ErrWorkspaceNeeded
+	}
+	wid, err := uuid.Parse(workspaceID)
+	if err != nil {
+		return nil, 0, err
+	}
+	return s.repo.ListActivities(ctx, wid, limit, offset)
 }
