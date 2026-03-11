@@ -18,6 +18,8 @@ type UserRepository interface {
 	Update(ctx context.Context, user *model.User) error
 	Delete(ctx context.Context, id string) error
 	HardDelete(ctx context.Context, id string) error
+	Ban(ctx context.Context, id string) error
+	Unban(ctx context.Context, id string) error
 	ListAll(ctx context.Context) ([]model.User, error)
 	ListAllIncludingDeleted(ctx context.Context) ([]model.User, error)
 }
@@ -376,4 +378,27 @@ func (r *PostgresUserRepository) HardDelete(ctx context.Context, id string) erro
 		return sql.ErrNoRows
 	}
 	return tx.Commit()
+}
+
+// Ban устанавливает status = BANNED. Пользователь не сможет войти.
+func (r *PostgresUserRepository) Ban(ctx context.Context, id string) error {
+	return r.setStatus(ctx, id, model.UserStatusBanned)
+}
+
+// Unban восстанавливает status = ACTIVE.
+func (r *PostgresUserRepository) Unban(ctx context.Context, id string) error {
+	return r.setStatus(ctx, id, model.UserStatusActive)
+}
+
+func (r *PostgresUserRepository) setStatus(ctx context.Context, id string, status model.UserStatus) error {
+	query := `UPDATE users SET status = $2, updated_at = NOW() WHERE id = $1`
+	result, err := r.db.ExecContext(ctx, query, id, status)
+	if err != nil {
+		return fmt.Errorf("set status failed: %w", err)
+	}
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }

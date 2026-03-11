@@ -15,6 +15,8 @@ import (
 const RouteWorkspaces = "/workspaces"
 const RouteUsers = "/users"
 const RouteUserByID = "/users/:id"
+const RouteUserBan = "/users/:id/ban"
+const RouteUserUnban = "/users/:id/unban"
 const RouteUserLicenses = "/users/:id/licenses"
 
 type Handler struct {
@@ -39,6 +41,8 @@ func (h *Handler) RegisterRoutes(r *gin.RouterGroup) {
 	r.GET(RouteWorkspaces, h.ListWorkspaces)
 	r.GET(RouteUsers, h.ListUsers)
 	r.DELETE(RouteUserByID, h.DeleteUser)
+	r.POST(RouteUserBan, h.BanUser)
+	r.POST(RouteUserUnban, h.UnbanUser)
 	r.POST(RouteUserLicenses, h.GrantLicense)
 }
 
@@ -145,6 +149,53 @@ func (h *Handler) DeleteUser(c *gin.Context) {
 	} else {
 		h.responder.SuccessWithMessage(c, "User deleted successfully")
 	}
+}
+
+// BanUser банит пользователя (status = BANNED). Нельзя забанить себя.
+func (h *Handler) BanUser(c *gin.Context) {
+	currentUserID, ok := middleware.GetUserIDFromGin(c)
+	if !ok {
+		h.responder.Unauthorized(c, "Authentication required")
+		return
+	}
+	userID := c.Param("id")
+	if userID == "" {
+		h.responder.BadRequest(c, "User ID required")
+		return
+	}
+	if userID == currentUserID {
+		h.responder.BadRequest(c, "Cannot ban your own account")
+		return
+	}
+	err := h.userRepo.Ban(c.Request.Context(), userID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			h.responder.NotFound(c, "User not found")
+			return
+		}
+		h.responder.InternalServerError(c, "Failed to ban user")
+		return
+	}
+	h.responder.SuccessWithMessage(c, "User banned successfully")
+}
+
+// UnbanUser снимает бан (status = ACTIVE).
+func (h *Handler) UnbanUser(c *gin.Context) {
+	userID := c.Param("id")
+	if userID == "" {
+		h.responder.BadRequest(c, "User ID required")
+		return
+	}
+	err := h.userRepo.Unban(c.Request.Context(), userID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			h.responder.NotFound(c, "User not found")
+			return
+		}
+		h.responder.InternalServerError(c, "Failed to unban user")
+		return
+	}
+	h.responder.SuccessWithMessage(c, "User unbanned successfully")
 }
 
 type grantLicenseRequest struct {
