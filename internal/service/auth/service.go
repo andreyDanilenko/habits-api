@@ -12,6 +12,7 @@ import (
 	"backend/internal/model"
 	regTokenRepo "backend/internal/repository/registration_token"
 	userRepo "backend/internal/repository/user"
+	invitationService "backend/internal/service/invitation"
 	workspaceService "backend/internal/service/workspace"
 	"backend/pkg/auth/token"
 	"backend/pkg/email"
@@ -29,14 +30,15 @@ var (
 )
 
 type AuthService struct {
-	userRepo           userRepo.UserRepository
-	regTokenRepo       regTokenRepo.Repository
-	workspaceService   *workspaceService.Service
-	tokenGen           *token.Generator
-	emailSender        email.Sender
-	accessExpiry       time.Duration
-	refreshExpiry      time.Duration
-	regTokenLifetime   time.Duration
+	userRepo            userRepo.UserRepository
+	regTokenRepo        regTokenRepo.Repository
+	workspaceService    *workspaceService.Service
+	invitationService   *invitationService.Service
+	tokenGen            *token.Generator
+	emailSender         email.Sender
+	accessExpiry        time.Duration
+	refreshExpiry       time.Duration
+	regTokenLifetime    time.Duration
 	verificationBaseURL string
 }
 
@@ -58,6 +60,7 @@ func NewService(
 	userRepo userRepo.UserRepository,
 	regTokenRepo regTokenRepo.Repository,
 	workspaceService *workspaceService.Service,
+	invitationService *invitationService.Service,
 	tokenGen *token.Generator,
 	emailSender email.Sender,
 	accessExpiry time.Duration,
@@ -69,6 +72,7 @@ func NewService(
 		userRepo:            userRepo,
 		regTokenRepo:        regTokenRepo,
 		workspaceService:    workspaceService,
+		invitationService:   invitationService,
 		tokenGen:            tokenGen,
 		emailSender:         emailSender,
 		accessExpiry:        accessExpiry,
@@ -143,6 +147,7 @@ func (s *AuthService) Register(ctx context.Context, req model.RegisterRequest) (
 		PasswordHash: hashedPassword,
 		Name:         nameOrNil(req.Name),
 		Token:        tok,
+		InviteToken:  req.InviteToken,
 		ExpiresAt:    expiresAt,
 		CreatedAt:    now,
 	}
@@ -217,6 +222,9 @@ func (s *AuthService) VerifyEmail(ctx context.Context, token string) (*LoginResp
 		Name:  defaultName,
 		Color: stringPtr("#3B82F6"),
 	}, user.ID)
+
+	// Принять приглашение в workspace, если было
+	_ = s.invitationService.AcceptAfterRegistration(ctx, rt.InviteToken, user.ID)
 
 	_ = s.regTokenRepo.DeleteByToken(ctx, token)
 

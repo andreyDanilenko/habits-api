@@ -10,6 +10,7 @@ type RegistrationToken struct {
 	PasswordHash string
 	Name         *string
 	Token        string
+	InviteToken  string // токен приглашения для автоматического добавления в workspace после регистрации
 	ExpiresAt    time.Time
 	CreatedAt    time.Time
 }

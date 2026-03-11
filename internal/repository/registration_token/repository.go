@@ -27,8 +27,8 @@ func NewRepository(db *sql.DB) *PostgresRepository {
 
 func (r *PostgresRepository) Create(ctx context.Context, rt *model.RegistrationToken) error {
 	query := `
-		INSERT INTO registration_tokens (id, email, password_hash, name, token, expires_at, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO registration_tokens (id, email, password_hash, name, token, invite_token, expires_at, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 	`
 	_, err := r.db.ExecContext(ctx, query,
 		rt.ID,
@@ -36,6 +36,7 @@ func (r *PostgresRepository) Create(ctx context.Context, rt *model.RegistrationT
 		rt.PasswordHash,
 		rt.Name,
 		rt.Token,
+		rt.InviteToken,
 		rt.ExpiresAt,
 		rt.CreatedAt,
 	)
@@ -44,7 +45,7 @@ func (r *PostgresRepository) Create(ctx context.Context, rt *model.RegistrationT
 
 func (r *PostgresRepository) FindByToken(ctx context.Context, token string) (*model.RegistrationToken, error) {
 	query := `
-		SELECT id, email, password_hash, name, token, expires_at, created_at
+		SELECT id, email, password_hash, name, token, COALESCE(invite_token, ''), expires_at, created_at
 		FROM registration_tokens
 		WHERE token = $1
 	`
@@ -56,6 +57,7 @@ func (r *PostgresRepository) FindByToken(ctx context.Context, token string) (*mo
 		&rt.PasswordHash,
 		&name,
 		&rt.Token,
+		&rt.InviteToken,
 		&rt.ExpiresAt,
 		&rt.CreatedAt,
 	)

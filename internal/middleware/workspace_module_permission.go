@@ -259,9 +259,11 @@ type endpointPermissionRule struct {
 // endpointPermissionTable — таблица эндпоинт → право. Порядок важен: первое совпадение возвращается.
 // Добавление нового эндпоинта: добавить строку в таблицу.
 var endpointPermissionTable = []endpointPermissionRule{
-	// Workspace-админка (участники, модули, роли)
+	// Workspace-админка (участники, модули, роли, приглашения)
 	{"/members", true, []string{http.MethodGet, http.MethodPost}, "workspace:member", "invite"},
 	{"/members", true, []string{http.MethodDelete}, "workspace:member", "remove"},
+	{"/invitations", true, []string{http.MethodGet, http.MethodPost}, "workspace:member", "invite"},
+	{"/invitations", true, []string{http.MethodDelete}, "workspace:member", "remove"},
 	{"/permissions/system-roles", true, []string{http.MethodGet}, "workspace:module", "read"},
 	{"/modules", true, []string{http.MethodGet}, "workspace:module", "read"},   // GUEST может просматривать список модулей
 	{"/modules", true, []string{http.MethodPost, http.MethodDelete}, "workspace:module", "manage"},

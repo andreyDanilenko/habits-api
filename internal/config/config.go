@@ -39,6 +39,7 @@ type AuthConfig struct {
 	SecureCookies             bool          `env:"SECURE_COOKIES" envDefault:"false"`
 	RegistrationTokenLifetime time.Duration `env:"REGISTRATION_TOKEN_LIFETIME" envDefault:"24h"` // Время жизни ссылки подтверждения
 	VerificationBaseURL       string        `env:"VERIFICATION_BASE_URL"`                        // Базовый URL для ссылки (например https://app.example.com)
+	InvitationTokenLifetime   time.Duration `env:"INVITATION_TOKEN_LIFETIME" envDefault:"168h"` // 7 дней
 }
 
 type EmailConfig struct {
@@ -82,6 +83,7 @@ func Load() (*Config, error) {
 			SecureCookies:             getEnvBool("SECURE_COOKIES", true),
 			RegistrationTokenLifetime: getEnvDuration("REGISTRATION_TOKEN_LIFETIME", 24*time.Hour),
 			VerificationBaseURL:       getEnv("VERIFICATION_BASE_URL", "http://localhost:3000"),
+			InvitationTokenLifetime:   getEnvDuration("INVITATION_TOKEN_LIFETIME", 168*time.Hour),
 		},
 		Email: EmailConfig{
 			SMTPHost:     getEnv("SMTP_HOST", ""),

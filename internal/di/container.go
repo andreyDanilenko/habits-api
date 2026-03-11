@@ -7,6 +7,7 @@ import (
 	authHandler "backend/internal/handler/auth"
 	crmHandler "backend/internal/handler/crm"
 	habitsHandler "backend/internal/handler/habits"
+	invitationHandler "backend/internal/handler/invitation"
 	journalHandler "backend/internal/handler/journal"
 	loggerHandler "backend/internal/handler/logger"
 	masterHandler "backend/internal/handler/master"
@@ -18,6 +19,7 @@ import (
 	"backend/internal/middleware"
 	crmRepo "backend/internal/repository/crm"
 	habitsRepo "backend/internal/repository/habits"
+	invitationRepo "backend/internal/repository/invitation"
 	journalRepo "backend/internal/repository/journal"
 	licenseRepo "backend/internal/repository/license"
 	loggerRepo "backend/internal/repository/logger"
@@ -33,6 +35,7 @@ import (
 	authService "backend/internal/service/auth"
 	crmService "backend/internal/service/crm"
 	habitsService "backend/internal/service/habits"
+	invitationService "backend/internal/service/invitation"
 	journalService "backend/internal/service/journal"
 	loggerService "backend/internal/service/logger"
 	masterService "backend/internal/service/master"
@@ -73,7 +76,9 @@ type Container struct {
 	Enforcer           *casbin.Enforcer
 	PermissionService  *permissionService.Service
 	PermissionHandler  *permissionHandler.Handler
+	InvitationHandler  *invitationHandler.Handler
 	TokenGen           *token.Generator
+	UserRepository     userRepo.UserRepository
 	Responder        *response.Responder
 	Validate         *validator.Validate
 }
@@ -120,10 +125,15 @@ func NewContainer(db *sql.DB, gormDB *gorm.DB, cfg *config.Config) (*Container, 
 		emailSender = email.NewNoopSender()
 	}
 
+	// Invitation (нужен для auth — AcceptAfterRegistration при регистрации по invite)
+	invitationRepository := invitationRepo.NewRepository(db)
+	invitationSvc := invitationService.NewService(invitationRepository, workspaceRepository, userRepository, permSvc, emailSender, cfg)
+
 	authSvc := authService.NewService(
 		userRepository,
 		regTokenRepository,
 		workspaceSvc,
+		invitationSvc,
 		tokenGen,
 		emailSender,
 		cfg.Auth.JWTExpiration,
@@ -175,6 +185,8 @@ func NewContainer(db *sql.DB, gormDB *gorm.DB, cfg *config.Config) (*Container, 
 	// Permission handler (permSvc и enforcer уже созданы выше)
 	permissionHdlr := permissionHandler.NewHandler(permSvc, responder, validate)
 
+	invitationHdlr := invitationHandler.NewHandler(invitationSvc, responder)
+
 	return &Container{
 		Cfg:              cfg,
 		Router:           r,
@@ -193,9 +205,11 @@ func NewContainer(db *sql.DB, gormDB *gorm.DB, cfg *config.Config) (*Container, 
 		Enforcer:          enforcer,
 		PermissionService: permSvc,
 		PermissionHandler: permissionHdlr,
+		InvitationHandler: invitationHdlr,
 		TokenGen:          tokenGen,
-		Responder:        responder,
-		Validate:         validate,
+		UserRepository:    userRepository,
+		Responder:         responder,
+		Validate:          validate,
 	}, nil
 }
 
@@ -248,6 +262,14 @@ func (c *Container) RegisterRoutes(r *router.Router) {
 	c.HabitsHandler.RegisterRoutes(wsIDGroup)
 	c.JournalHandler.RegisterRoutes(wsIDGroup)
 	c.PermissionHandler.RegisterRoutes(wsIDGroup)
+	invitationsGroup := wsIDGroup.Group("/invitations")
+	c.InvitationHandler.RegisterRoutes(invitationsGroup)
+
+	// Public invitation routes (optional auth)
+	publicGroup := apiV1.Group("/public")
+	publicGroup.Use(middleware.OptionalGinAuthMiddleware(c.TokenGen, c.UserRepository))
+	publicInvitationsGroup := publicGroup.Group("/invitations")
+	c.InvitationHandler.RegisterPublicRoutes(publicInvitationsGroup)
 
 	adminGroup := protected.Group("/admin")
 	adminGroup.Use(middleware.RequireAdmin(c.Responder))

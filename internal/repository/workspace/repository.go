@@ -552,6 +552,38 @@ func (r *Repository) ListMembers(ctx context.Context, workspaceID uuid.UUID) ([]
 	return list, nil
 }
 
+// AddMember добавляет участника в workspace (user_workspaces). Роли назначаются отдельно через PermissionService.
+func (r *Repository) AddMember(ctx context.Context, workspaceID, userID uuid.UUID, role string) error {
+	role = strings.ToUpper(strings.TrimSpace(role))
+	if role != "OWNER" && role != "ADMIN" && role != "MEMBER" && role != "GUEST" {
+		return fmt.Errorf("invalid system role: %s", role)
+	}
+	_, err := r.db.ExecContext(ctx,
+		"INSERT INTO user_workspaces (user_id, workspace_id, role) VALUES ($1, $2, $3) ON CONFLICT (user_id, workspace_id) DO UPDATE SET role = EXCLUDED.role",
+		userID, workspaceID, role,
+	)
+	if err != nil {
+		return fmt.Errorf("add member to workspace: %w", err)
+	}
+	return nil
+}
+
+// IsMemberInWorkspace проверяет, есть ли пользователь с данным email в workspace.
+func (r *Repository) IsMemberInWorkspace(ctx context.Context, workspaceID uuid.UUID, email string) (bool, error) {
+	var ok bool
+	err := r.db.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM user_workspaces uw
+			JOIN users u ON u.id = uw.user_id
+			WHERE uw.workspace_id = $1 AND LOWER(u.email) = LOWER($2)
+		)
+	`, workspaceID, email).Scan(&ok)
+	if err != nil {
+		return false, fmt.Errorf("check member in workspace: %w", err)
+	}
+	return ok, nil
+}
+
 // RemoveMember удаляет участника из workspace (user_role_assignments, затем user_workspaces).
 func (r *Repository) RemoveMember(ctx context.Context, workspaceID, userID uuid.UUID) error {
 	_, err := r.db.ExecContext(ctx,
