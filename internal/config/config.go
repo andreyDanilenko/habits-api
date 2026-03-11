@@ -32,8 +32,8 @@ type DatabaseConfig struct {
 
 type AuthConfig struct {
 	JWTSecretKey      string        `env:"JWT_SECRET_KEY,required"`
-	JWTExpiration     time.Duration `env:"JWT_EXPIRATION" envDefault:"24h"`
-	RefreshExpiration time.Duration `env:"REFRESH_EXPIRATION" envDefault:"720h"`
+	JWTExpiration     time.Duration `env:"JWT_EXPIRATION" envDefault:"15m"`   // Access: 15 мин
+	RefreshExpiration time.Duration `env:"REFRESH_EXPIRATION" envDefault:"240h"` // Refresh: 10 дней
 	CookieDomain      string        `env:"COOKIE_DOMAIN"`
 	SecureCookies     bool          `env:"SECURE_COOKIES" envDefault:"false"`
 }
@@ -65,8 +65,8 @@ func Load() (*Config, error) {
 		},
 		Auth: AuthConfig{
 			JWTSecretKey:      getEnv("JWT_SECRET_KEY", ""),
-			JWTExpiration:     getEnvDuration("JWT_EXPIRATION", 24*time.Hour),
-			RefreshExpiration: getEnvDuration("REFRESH_EXPIRATION", 720*time.Hour),
+			JWTExpiration:     getEnvDuration("JWT_EXPIRATION", 15*time.Minute),
+			RefreshExpiration: getEnvDuration("REFRESH_EXPIRATION", 240*time.Hour),
 			CookieDomain:      getEnv("COOKIE_DOMAIN", ""),
 			SecureCookies:     getEnvBool("SECURE_COOKIES", true),
 		},

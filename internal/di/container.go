@@ -100,7 +100,7 @@ func NewContainer(db *sql.DB, gormDB *gorm.DB, cfg *config.Config) (*Container, 
 	// Auth
 	userRepository := userRepo.NewRepository(db)
 	tokenGen := token.NewGenerator(cfg.Auth.JWTSecretKey, cfg.Auth.JWTExpiration)
-	authSvc := authService.NewService(userRepository, workspaceSvc, tokenGen, cfg.Auth.JWTExpiration)
+	authSvc := authService.NewService(userRepository, workspaceSvc, tokenGen, cfg.Auth.JWTExpiration, cfg.Auth.RefreshExpiration)
 
 	cookieManager := cookies.NewManagerFromEnv()
 	authHdlr := authHandler.NewHandler(authSvc, cookieManager, responder, validate)
@@ -179,12 +179,18 @@ func (c *Container) RegisterRoutes(r *router.Router) {
 	r.GET("/api/v1/health", HealthCheck)
 	apiV1 := r.Group("/api/v1")
 
-	// Public auth routes (login, register, logout, refresh)
-	// Rate limit: 10 попыток в минуту на IP — защита от брутфорса
-	authRateLimiter := middleware.NewAuthRateLimiter(10, time.Minute)
+	// Public auth routes с per-route rate limit:
+	// login: 5/min per (IP, email) — защита от брутфорса по конкретному email
+	// register: 10/min per IP
+	// refresh, logout: 30/min per IP
 	authGroup := apiV1.Group("/auth")
-	authGroup.Use(authRateLimiter.Middleware(c.Responder))
-	c.AuthHandler.RegisterPublicRoutes(authGroup)
+	authRateLimitConfig := &middleware.AuthRateLimitConfig{
+		LoginLimiter:    middleware.NewAuthRateLimiter(5, time.Minute),
+		RegisterLimiter: middleware.NewAuthRateLimiter(10, time.Minute),
+		RefreshLimiter:  middleware.NewAuthRateLimiter(30, time.Minute),
+		LogoutLimiter:   middleware.NewAuthRateLimiter(30, time.Minute),
+	}
+	c.AuthHandler.RegisterPublicRoutesWithRateLimit(authGroup, authRateLimitConfig)
 
 	// Protected routes
 	protected := apiV1.Group("")

@@ -19,6 +19,7 @@ var (
 	ErrUserExists         = errors.New("user already exists")
 	ErrInvalidCredentials = errors.New("invalid email or password")
 	ErrUserNotFound       = errors.New("user not found")
+	ErrInvalidRefreshToken = errors.New("invalid or expired refresh token")
 )
 
 type AuthService struct {
@@ -26,12 +27,14 @@ type AuthService struct {
 	workspaceService *workspaceService.Service
 	tokenGen         *token.Generator
 	accessExpiry     time.Duration
+	refreshExpiry    time.Duration
 }
 
 type LoginResponse struct {
-	User        *model.User `json:"user"`
-	AccessToken string      `json:"-"`
-	ExpiresIn   int         `json:"expires_in"`
+	User         *model.User `json:"user"`
+	AccessToken  string      `json:"-"`
+	RefreshToken string      `json:"-"`
+	ExpiresIn    int         `json:"expires_in"`
 }
 
 func NewService(
@@ -39,12 +42,14 @@ func NewService(
 	workspaceService *workspaceService.Service,
 	tokenGen *token.Generator,
 	accessExpiry time.Duration,
+	refreshExpiry time.Duration,
 ) *AuthService {
 	return &AuthService{
 		userRepo:         userRepo,
 		workspaceService: workspaceService,
 		tokenGen:         tokenGen,
 		accessExpiry:     accessExpiry,
+		refreshExpiry:    refreshExpiry,
 	}
 }
 
@@ -83,10 +88,15 @@ func (s *AuthService) Register(ctx context.Context, req model.RegisterRequest) (
 		if err != nil {
 			return nil, err
 		}
+		refreshToken, err := s.tokenGen.GenerateRefreshToken(anyStatus.ID, string(anyStatus.Role), s.refreshExpiry)
+		if err != nil {
+			return nil, err
+		}
 		return &LoginResponse{
-			User:        anyStatus,
-			AccessToken: accessToken,
-			ExpiresIn:   int(s.accessExpiry.Seconds()),
+			User:         anyStatus,
+			AccessToken:  accessToken,
+			RefreshToken: refreshToken,
+			ExpiresIn:    int(s.accessExpiry.Seconds()),
 		}, nil
 	}
 
@@ -123,11 +133,16 @@ func (s *AuthService) Register(ctx context.Context, req model.RegisterRequest) (
 	if err != nil {
 		return nil, err
 	}
+	refreshToken, err := s.tokenGen.GenerateRefreshToken(user.ID, string(user.Role), s.refreshExpiry)
+	if err != nil {
+		return nil, err
+	}
 	user.Password = ""
 	return &LoginResponse{
-		User:        user,
-		AccessToken: accessToken,
-		ExpiresIn:   int(s.accessExpiry.Seconds()),
+		User:         user,
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		ExpiresIn:    int(s.accessExpiry.Seconds()),
 	}, nil
 }
 
@@ -160,18 +175,23 @@ func (s *AuthService) Login(ctx context.Context, req model.LoginRequest) (*Login
 		return nil, errors.New("account is not active")
 	}
 
-	// 4. Генерируем access token
+	// 4. Генерируем access и refresh токены
 	accessToken, err := s.tokenGen.Generate(user.ID, string(user.Role))
+	if err != nil {
+		return nil, err
+	}
+	refreshToken, err := s.tokenGen.GenerateRefreshToken(user.ID, string(user.Role), s.refreshExpiry)
 	if err != nil {
 		return nil, err
 	}
 
 	// 5. Создаем ответ
-	user.Password = "" // Очищаем пароль
+	user.Password = ""
 	return &LoginResponse{
-		User:        user,
-		AccessToken: accessToken,
-		ExpiresIn:   int(s.accessExpiry.Seconds()),
+		User:         user,
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		ExpiresIn:    int(s.accessExpiry.Seconds()),
 	}, nil
 }
 
@@ -188,9 +208,41 @@ func (s *AuthService) GetUserProfile(ctx context.Context, userID string) (*model
 	return user, nil
 }
 
-// Logout - выход (здесь можно добавить инвалидацию токена при необходимости)
-func (s *AuthService) Logout(ctx context.Context, userID string) error {
+// Refresh обновляет access token по refresh token. Возвращает новую пару токенов.
+func (s *AuthService) Refresh(ctx context.Context, refreshTokenString string) (*LoginResponse, error) {
+	claims, err := s.tokenGen.Validate(refreshTokenString)
+	if err != nil {
+		return nil, ErrInvalidRefreshToken
+	}
 
+	user, err := s.userRepo.FindByID(ctx, claims.UserID)
+	if err != nil || user == nil {
+		return nil, ErrInvalidRefreshToken
+	}
+	if user.Status != nil && *user.Status != model.UserStatusActive {
+		return nil, ErrInvalidRefreshToken
+	}
+
+	accessToken, err := s.tokenGen.Generate(user.ID, string(user.Role))
+	if err != nil {
+		return nil, err
+	}
+	refreshToken, err := s.tokenGen.GenerateRefreshToken(user.ID, string(user.Role), s.refreshExpiry)
+	if err != nil {
+		return nil, err
+	}
+
+	user.Password = ""
+	return &LoginResponse{
+		User:         user,
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		ExpiresIn:    int(s.accessExpiry.Seconds()),
+	}, nil
+}
+
+// Logout - выход (удаление cookies на стороне handler)
+func (s *AuthService) Logout(ctx context.Context, userID string) error {
 	return nil
 }
 

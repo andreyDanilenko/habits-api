@@ -32,12 +32,9 @@ func NewManagerFromEnv() *Manager {
 	var sameSite http.SameSite
 
 	if env == "production" {
-		// Production: HTTPS + Secure + SameSite=None для кросс-доменных запросов
 		secure = true
 		sameSite = http.SameSiteNoneMode
 	} else {
-		// Development (localhost): HTTP + SameSite=Lax
-		// Lax работает для localhost и разрешает cookies при навигации
 		secure = false
 		sameSite = http.SameSiteLaxMode
 	}

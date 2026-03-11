@@ -86,7 +86,7 @@ order = "ORDER BY " + col + " " + sortOrder(opts.SortOrder)
 
 | Мера | Файл | Описание |
 |------|------|----------|
-| Rate limiting | `internal/middleware/rate_limit.go` | 10 попыток/мин на IP для `/auth/*` |
+| Rate limiting | `internal/middleware/rate_limit.go` | Per-route: login 5/min per (IP,email), register 10/min, refresh/logout 30/min per IP |
 | Timing attack fix | `internal/service/auth/service.go` | При несуществующем user — сравнение с dummy hash |
 | Dummy hash | `pkg/password/password.go` | `DummyHash()` для constant-time проверки |
 
@@ -94,8 +94,13 @@ order = "ORDER BY " + col + " " + sortOrder(opts.SortOrder)
 
 В `internal/di/container.go`:
 ```go
-authRateLimiter := middleware.NewAuthRateLimiter(10, time.Minute)
-authGroup.Use(authRateLimiter.Middleware(c.Responder))
+authRateLimitConfig := &middleware.AuthRateLimitConfig{
+    LoginLimiter:    middleware.NewAuthRateLimiter(5, time.Minute),   // per (IP, email)
+    RegisterLimiter: middleware.NewAuthRateLimiter(10, time.Minute),
+    RefreshLimiter:  middleware.NewAuthRateLimiter(30, time.Minute),
+    LogoutLimiter:   middleware.NewAuthRateLimiter(30, time.Minute),
+}
+c.AuthHandler.RegisterPublicRoutesWithRateLimit(authGroup, authRateLimitConfig)
 ```
 
-Можно вынести 10 и time.Minute в конфиг.
+Заголовки: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `Retry-After` (при 429).

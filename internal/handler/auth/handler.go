@@ -2,7 +2,6 @@ package auth
 
 import (
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
 
@@ -22,10 +21,33 @@ func (h *Handler) RegisterRoutes(r *gin.RouterGroup) {
 }
 
 func (h *Handler) RegisterPublicRoutes(r *gin.RouterGroup) {
-	r.POST(RouteLogin, docLogin(h))
-	r.POST(RouteRegister, docRegister(h))
-	r.POST(RouteLogout, docLogout(h))
-	r.POST(RouteRefresh, docRefresh(h))
+	h.registerPublicRoutesWithLimiters(r, nil)
+}
+
+// RegisterPublicRoutesWithRateLimit регистрирует публичные маршруты с per-route rate limit.
+func (h *Handler) RegisterPublicRoutesWithRateLimit(r *gin.RouterGroup, cfg *middleware.AuthRateLimitConfig) {
+	h.registerPublicRoutesWithLimiters(r, cfg)
+}
+
+func (h *Handler) registerPublicRoutesWithLimiters(r *gin.RouterGroup, cfg *middleware.AuthRateLimitConfig) {
+	if cfg == nil {
+		r.POST(RouteLogin, docLogin(h))
+		r.POST(RouteRegister, docRegister(h))
+		r.POST(RouteLogout, docLogout(h))
+		r.POST(RouteRefresh, docRefresh(h))
+		return
+	}
+	post := func(route string, limiter *middleware.AuthRateLimiter, extractor middleware.KeyExtractor, handler gin.HandlerFunc) {
+		if limiter != nil {
+			r.POST(route, limiter.Middleware(h.responder, extractor), handler)
+		} else {
+			r.POST(route, handler)
+		}
+	}
+	post(RouteLogin, cfg.LoginLimiter, middleware.LoginKeyExtractor, docLogin(h))
+	post(RouteRegister, cfg.RegisterLimiter, middleware.IPKeyExtractor, docRegister(h))
+	post(RouteLogout, cfg.LogoutLimiter, middleware.IPKeyExtractor, docLogout(h))
+	post(RouteRefresh, cfg.RefreshLimiter, middleware.IPKeyExtractor, docRefresh(h))
 }
 
 func (h *Handler) RegisterProtectedRoutes(r *gin.RouterGroup) {
@@ -77,8 +99,10 @@ func (h *Handler) Login(c *gin.Context) {
 		}
 		return
 	}
-	expiresAt := time.Now().Add(time.Duration(loginResp.ExpiresIn) * time.Second)
-	h.cookieManager.SetToken(c.Writer, "access_token", loginResp.AccessToken, expiresAt)
+	accessExpiresAt := time.Now().Add(time.Duration(loginResp.ExpiresIn) * time.Second)
+	h.cookieManager.SetToken(c.Writer, "access_token", loginResp.AccessToken, accessExpiresAt)
+	refreshExpiresAt := time.Now().Add(30 * 24 * time.Hour) // 30 дней для refresh
+	h.cookieManager.SetToken(c.Writer, "refresh_token", loginResp.RefreshToken, refreshExpiresAt)
 
 	h.responder.SuccessWithData(c, gin.H{
 		"user":       loginResp.User,
@@ -156,8 +180,10 @@ func (h *Handler) Register(c *gin.Context) {
 		}
 		return
 	}
-	expiresAt := time.Now().Add(time.Duration(registerResp.ExpiresIn) * time.Second)
-	h.cookieManager.SetToken(c.Writer, "access_token", registerResp.AccessToken, expiresAt)
+	accessExpiresAt := time.Now().Add(time.Duration(registerResp.ExpiresIn) * time.Second)
+	h.cookieManager.SetToken(c.Writer, "access_token", registerResp.AccessToken, accessExpiresAt)
+	refreshExpiresAt := time.Now().Add(30 * 24 * time.Hour) // 30 дней для refresh
+	h.cookieManager.SetToken(c.Writer, "refresh_token", registerResp.RefreshToken, refreshExpiresAt)
 
 	h.responder.Created(c, "User registered successfully", gin.H{
 		"user":       registerResp.User,
@@ -167,6 +193,7 @@ func (h *Handler) Register(c *gin.Context) {
 
 func (h *Handler) Logout(c *gin.Context) {
 	h.cookieManager.Delete(c.Writer, "access_token")
+	h.cookieManager.Delete(c.Writer, "refresh_token")
 	h.responder.SuccessWithMessage(c, "Logged out successfully")
 }
 
@@ -187,5 +214,30 @@ func (h *Handler) Me(c *gin.Context) {
 }
 
 func (h *Handler) Refresh(c *gin.Context) {
-	h.responder.WriteError(c, http.StatusNotImplemented, "Refresh endpoint is not implemented yet")
+	refreshToken, err := h.cookieManager.GetToken(c.Request, "refresh_token")
+	if err != nil || refreshToken == "" {
+		h.responder.Unauthorized(c, "Refresh token required")
+		return
+	}
+
+	resp, err := h.service.Refresh(c.Request.Context(), refreshToken)
+	if err != nil {
+		if err == authService.ErrInvalidRefreshToken {
+			h.cookieManager.Delete(c.Writer, "refresh_token")
+			h.responder.Unauthorized(c, "Invalid or expired refresh token")
+			return
+		}
+		h.responder.InternalServerError(c, "Failed to refresh token")
+		return
+	}
+
+	accessExpiresAt := time.Now().Add(time.Duration(resp.ExpiresIn) * time.Second)
+	h.cookieManager.SetToken(c.Writer, "access_token", resp.AccessToken, accessExpiresAt)
+	refreshExpiresAt := time.Now().Add(30 * 24 * time.Hour)
+	h.cookieManager.SetToken(c.Writer, "refresh_token", resp.RefreshToken, refreshExpiresAt)
+
+	h.responder.SuccessWithData(c, gin.H{
+		"user":       resp.User,
+		"expires_in": resp.ExpiresIn,
+	})
 }

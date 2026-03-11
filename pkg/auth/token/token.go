@@ -26,11 +26,20 @@ func NewGenerator(secretKey string, expiresIn time.Duration) *Generator {
 }
 
 func (g *Generator) Generate(userID, role string) (string, error) {
+	return g.GenerateWithExpiry(userID, role, g.expiresIn)
+}
+
+// GenerateRefreshToken создаёт JWT с длительным сроком для refresh-сессии.
+func (g *Generator) GenerateRefreshToken(userID, role string, expiry time.Duration) (string, error) {
+	return g.GenerateWithExpiry(userID, role, expiry)
+}
+
+func (g *Generator) GenerateWithExpiry(userID, role string, expiry time.Duration) (string, error) {
 	claims := &Claims{
 		UserID: userID,
 		Role:   role,
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(g.expiresIn)),
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(expiry)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			Subject:   userID,
 		},
