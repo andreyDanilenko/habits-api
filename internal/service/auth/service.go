@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"backend/internal/model"
@@ -101,7 +102,7 @@ func (s *AuthService) Register(ctx context.Context, req model.RegisterRequest) (
 		now := time.Now()
 		anyStatus.Status = userStatusPtr(model.UserStatusActive)
 		anyStatus.Password = hashedPassword
-		anyStatus.Name = &req.Name
+		anyStatus.Name = nameOrNil(req.Name)
 		anyStatus.UpdatedAt = now
 		if err := s.userRepo.Update(ctx, anyStatus); err != nil {
 			return nil, err
@@ -140,7 +141,7 @@ func (s *AuthService) Register(ctx context.Context, req model.RegisterRequest) (
 		ID:           uuid.New().String(),
 		Email:        req.Email,
 		PasswordHash: hashedPassword,
-		Name:         &req.Name,
+		Name:         nameOrNil(req.Name),
 		Token:        tok,
 		ExpiresAt:    expiresAt,
 		CreatedAt:    now,
@@ -337,6 +338,13 @@ func (s *AuthService) Logout(ctx context.Context, userID string) error {
 }
 
 func stringPtr(s string) *string {
+	return &s
+}
+
+func nameOrNil(s string) *string {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
 	return &s
 }
 

@@ -32,7 +32,7 @@ type User struct {
 type RegisterRequest struct {
 	Email    string `json:"email" validate:"required,email"`
 	Password string `json:"password" validate:"required,min=8,password_format"`
-	Name     string `json:"name" validate:"required,min=1"`
+	Name     string `json:"name"` // необязательно, может быть пустой строкой
 }
 
 type LoginRequest struct {

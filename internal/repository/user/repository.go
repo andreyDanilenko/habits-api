@@ -14,7 +14,12 @@ type UserRepository interface {
 	FindByEmail(ctx context.Context, email string) (*model.User, error)
 	FindByEmailAnyStatus(ctx context.Context, email string) (*model.User, error)
 	FindByID(ctx context.Context, id string) (*model.User, error)
+	FindByIDAnyStatus(ctx context.Context, id string) (*model.User, error)
 	Update(ctx context.Context, user *model.User) error
+	Delete(ctx context.Context, id string) error
+	HardDelete(ctx context.Context, id string) error
+	ListAll(ctx context.Context) ([]model.User, error)
+	ListAllIncludingDeleted(ctx context.Context) ([]model.User, error)
 }
 type PostgresUserRepository struct {
 	db *sql.DB
@@ -149,6 +154,45 @@ func (r *PostgresUserRepository) FindByID(ctx context.Context, id string) (*mode
 	return &user, nil
 }
 
+// FindByIDAnyStatus возвращает пользователя по ID без фильтра по status (в т.ч. DELETED).
+func (r *PostgresUserRepository) FindByIDAnyStatus(ctx context.Context, id string) (*model.User, error) {
+	query := `
+		SELECT id, email, password, name, role, avatar_url, status, created_at, updated_at
+		FROM users WHERE id = $1
+	`
+	var user model.User
+	var name, avatarURL sql.NullString
+	var status sql.NullString
+	err := r.db.QueryRowContext(ctx, query, id).Scan(
+		&user.ID,
+		&user.Email,
+		&user.Password,
+		&name,
+		&user.Role,
+		&avatarURL,
+		&status,
+		&user.CreatedAt,
+		&user.UpdatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find by id any status: %w", err)
+	}
+	if name.Valid {
+		user.Name = &name.String
+	}
+	if avatarURL.Valid {
+		user.AvatarURL = &avatarURL.String
+	}
+	if status.Valid {
+		s := model.UserStatus(status.String)
+		user.Status = &s
+	}
+	return &user, nil
+}
+
 func (r *PostgresUserRepository) Update(ctx context.Context, user *model.User) error {
 	query := `
 		UPDATE users SET
@@ -238,6 +282,55 @@ func (r *PostgresUserRepository) ListAll(ctx context.Context) ([]model.User, err
 	return users, nil
 }
 
+// ListAllIncludingDeleted возвращает всех пользователей (ACTIVE и DELETED) для админки.
+func (r *PostgresUserRepository) ListAllIncludingDeleted(ctx context.Context) ([]model.User, error) {
+	query := `
+		SELECT id, email, name, role, avatar_url, status, created_at, updated_at
+		FROM users
+		ORDER BY status, email
+	`
+	rows, err := r.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("list all including deleted: %w", err)
+	}
+	defer rows.Close()
+
+	var users []model.User
+	for rows.Next() {
+		var u model.User
+		var name, avatarURL sql.NullString
+		var status sql.NullString
+		err := rows.Scan(
+			&u.ID,
+			&u.Email,
+			&name,
+			&u.Role,
+			&avatarURL,
+			&status,
+			&u.CreatedAt,
+			&u.UpdatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("scan user: %w", err)
+		}
+		if name.Valid {
+			u.Name = &name.String
+		}
+		if avatarURL.Valid {
+			u.AvatarURL = &avatarURL.String
+		}
+		if status.Valid {
+			s := model.UserStatus(status.String)
+			u.Status = &s
+		}
+		users = append(users, u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows: %w", err)
+	}
+	return users, nil
+}
+
 func (r *PostgresUserRepository) Delete(ctx context.Context, id string) error {
 	query := `
 		UPDATE users 
@@ -256,4 +349,31 @@ func (r *PostgresUserRepository) Delete(ctx context.Context, id string) error {
 	}
 
 	return nil
+}
+
+// HardDelete удаляет пользователя из БД безвозвратно. Сначала удаляет user_workspaces и workspaces (owner).
+func (r *PostgresUserRepository) HardDelete(ctx context.Context, id string) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	_, err = tx.ExecContext(ctx, `DELETE FROM user_workspaces WHERE user_id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("delete user_workspaces: %w", err)
+	}
+	_, err = tx.ExecContext(ctx, `DELETE FROM workspaces WHERE owner_id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("delete workspaces: %w", err)
+	}
+	result, err := tx.ExecContext(ctx, `DELETE FROM users WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("delete user: %w", err)
+	}
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+	return tx.Commit()
 }

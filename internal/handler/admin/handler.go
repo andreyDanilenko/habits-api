@@ -52,9 +52,9 @@ func (h *Handler) ListWorkspaces(c *gin.Context) {
 	h.responder.SuccessWithData(c, gin.H{"workspaces": list})
 }
 
-// ListUsers возвращает всех пользователей с их workspaces. Только для ADMIN.
+// ListUsers возвращает всех пользователей (в т.ч. DELETED) с их workspaces. Только для ADMIN.
 func (h *Handler) ListUsers(c *gin.Context) {
-	users, err := h.userRepo.ListAll(c.Request.Context())
+	users, err := h.userRepo.ListAllIncludingDeleted(c.Request.Context())
 	if err != nil {
 		h.responder.InternalServerError(c, "Failed to list users")
 		return
@@ -103,7 +103,10 @@ func (h *Handler) ListUsers(c *gin.Context) {
 	h.responder.SuccessWithData(c, gin.H{"users": result})
 }
 
-// DeleteUser удаляет пользователя (soft delete). Нельзя удалить себя. Только для ADMIN.
+// DeleteUser удаляет пользователя. Только для ADMIN.
+// - DELETE /admin/users/:id — мягкое удаление (status = DELETED)
+// - DELETE /admin/users/:id?permanent=true — жёсткое удаление (удаление из БД)
+// Нельзя удалить себя.
 func (h *Handler) DeleteUser(c *gin.Context) {
 	currentUserID, ok := middleware.GetUserIDFromGin(c)
 	if !ok {
@@ -119,7 +122,16 @@ func (h *Handler) DeleteUser(c *gin.Context) {
 		h.responder.BadRequest(c, "Cannot delete your own account")
 		return
 	}
-	err := h.userRepo.Delete(c.Request.Context(), userID)
+
+	permanent := c.Query("permanent") == "true"
+
+	var err error
+	if permanent {
+		err = h.userRepo.HardDelete(c.Request.Context(), userID)
+	} else {
+		err = h.userRepo.Delete(c.Request.Context(), userID)
+	}
+
 	if err != nil {
 		if err == sql.ErrNoRows {
 			h.responder.NotFound(c, "User not found")
@@ -128,7 +140,11 @@ func (h *Handler) DeleteUser(c *gin.Context) {
 		h.responder.InternalServerError(c, "Failed to delete user")
 		return
 	}
-	h.responder.SuccessWithMessage(c, "User deleted successfully")
+	if permanent {
+		h.responder.SuccessWithMessage(c, "User permanently deleted")
+	} else {
+		h.responder.SuccessWithMessage(c, "User deleted successfully")
+	}
 }
 
 type grantLicenseRequest struct {
