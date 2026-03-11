@@ -142,6 +142,8 @@ func (h *Handler) Register(c *gin.Context) {
 						message = "Password is required"
 					} else if tag == "min" {
 						message = fmt.Sprintf("Password must be at least %s characters long", fieldErr.Param())
+					} else if tag == "password_format" {
+						message = "Password must contain letters, numbers and special characters (@$!%*#?&), min 8 chars"
 					}
 				case "Name":
 					if tag == "required" {

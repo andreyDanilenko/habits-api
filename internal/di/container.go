@@ -41,6 +41,7 @@ import (
 	workspaceService "backend/internal/service/workspace"
 	"backend/pkg/auth/token"
 	"backend/pkg/http/cookies"
+	"backend/pkg/password"
 	"backend/pkg/response"
 	"database/sql"
 	"net/http"
@@ -78,6 +79,9 @@ type Container struct {
 func NewContainer(db *sql.DB, gormDB *gorm.DB, cfg *config.Config) (*Container, error) {
 	responder := response.NewResponder()
 	validate := validator.New()
+	_ = validate.RegisterValidation("password_format", func(fl validator.FieldLevel) bool {
+		return password.ValidateFormat(fl.Field().String())
+	})
 	r := router.New(responder)
 
 	// Logger
