@@ -33,6 +33,7 @@ func (h *Handler) registerPublicRoutesWithLimiters(r *gin.RouterGroup, cfg *midd
 	if cfg == nil {
 		r.POST(RouteLogin, docLogin(h))
 		r.POST(RouteRegister, docRegister(h))
+		r.GET(RouteVerifyEmail, docVerifyEmail(h))
 		r.POST(RouteLogout, docLogout(h))
 		r.POST(RouteRefresh, docRefresh(h))
 		return
@@ -44,8 +45,16 @@ func (h *Handler) registerPublicRoutesWithLimiters(r *gin.RouterGroup, cfg *midd
 			r.POST(route, handler)
 		}
 	}
+	get := func(route string, limiter *middleware.AuthRateLimiter, extractor middleware.KeyExtractor, handler gin.HandlerFunc) {
+		if limiter != nil {
+			r.GET(route, limiter.Middleware(h.responder, extractor), handler)
+		} else {
+			r.GET(route, handler)
+		}
+	}
 	post(RouteLogin, cfg.LoginLimiter, middleware.LoginKeyExtractor, docLogin(h))
 	post(RouteRegister, cfg.RegisterLimiter, middleware.IPKeyExtractor, docRegister(h))
+	get(RouteVerifyEmail, cfg.RegisterLimiter, middleware.IPKeyExtractor, docVerifyEmail(h))
 	post(RouteLogout, cfg.LogoutLimiter, middleware.IPKeyExtractor, docLogout(h))
 	post(RouteRefresh, cfg.RefreshLimiter, middleware.IPKeyExtractor, docRefresh(h))
 }
@@ -171,7 +180,7 @@ func (h *Handler) Register(c *gin.Context) {
 		return
 	}
 
-	registerResp, err := h.service.Register(c.Request.Context(), req)
+	out, err := h.service.Register(c.Request.Context(), req)
 
 	if err != nil {
 		switch err {
@@ -182,15 +191,22 @@ func (h *Handler) Register(c *gin.Context) {
 		}
 		return
 	}
-	accessExpiresAt := time.Now().Add(time.Duration(registerResp.ExpiresIn) * time.Second)
-	h.cookieManager.SetToken(c.Writer, "access_token", registerResp.AccessToken, accessExpiresAt)
-	refreshExpiresAt := time.Now().Add(30 * 24 * time.Hour) // 30 дней для refresh
-	h.cookieManager.SetToken(c.Writer, "refresh_token", registerResp.RefreshToken, refreshExpiresAt)
 
-	h.responder.Created(c, "User registered successfully", gin.H{
-		"user":       registerResp.User,
-		"expires_in": registerResp.ExpiresIn,
-	})
+	if out.LoginResponse != nil {
+		// Реактивация удалённого пользователя — сразу логин
+		accessExpiresAt := time.Now().Add(time.Duration(out.LoginResponse.ExpiresIn) * time.Second)
+		h.cookieManager.SetToken(c.Writer, "access_token", out.LoginResponse.AccessToken, accessExpiresAt)
+		refreshExpiresAt := time.Now().Add(30 * 24 * time.Hour)
+		h.cookieManager.SetToken(c.Writer, "refresh_token", out.LoginResponse.RefreshToken, refreshExpiresAt)
+		h.responder.Created(c, "User registered successfully", gin.H{
+			"user":       out.LoginResponse.User,
+			"expires_in": out.LoginResponse.ExpiresIn,
+		})
+		return
+	}
+
+	// Ожидание подтверждения email
+	h.responder.Created(c, out.Message, gin.H{"message": out.Message})
 }
 
 func (h *Handler) Logout(c *gin.Context) {
@@ -213,6 +229,37 @@ func (h *Handler) Me(c *gin.Context) {
 	}
 
 	h.responder.SuccessWithData(c, gin.H{"user": user})
+}
+
+func (h *Handler) VerifyEmail(c *gin.Context) {
+	token := c.Query("token")
+	if token == "" {
+		h.responder.BadRequest(c, "Token is required")
+		return
+	}
+
+	resp, err := h.service.VerifyEmail(c.Request.Context(), token)
+	if err != nil {
+		switch err {
+		case authService.ErrInvalidVerificationToken:
+			h.responder.WriteErrorWithCode(c, 400, "INVALID_TOKEN", "Invalid or expired verification link", nil)
+		case authService.ErrUserExists:
+			h.responder.WriteErrorWithCode(c, 409, "USER_EXISTS", "User already exists", nil)
+		default:
+			h.responder.InternalServerError(c, "Failed to verify email")
+		}
+		return
+	}
+
+	accessExpiresAt := time.Now().Add(time.Duration(resp.ExpiresIn) * time.Second)
+	h.cookieManager.SetToken(c.Writer, "access_token", resp.AccessToken, accessExpiresAt)
+	refreshExpiresAt := time.Now().Add(30 * 24 * time.Hour)
+	h.cookieManager.SetToken(c.Writer, "refresh_token", resp.RefreshToken, refreshExpiresAt)
+
+	h.responder.SuccessWithData(c, gin.H{
+		"user":       resp.User,
+		"expires_in": resp.ExpiresIn,
+	})
 }
 
 func (h *Handler) Refresh(c *gin.Context) {

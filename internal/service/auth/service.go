@@ -2,32 +2,41 @@ package auth
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
 
 	"backend/internal/model"
+	regTokenRepo "backend/internal/repository/registration_token"
 	userRepo "backend/internal/repository/user"
 	workspaceService "backend/internal/service/workspace"
 	"backend/pkg/auth/token"
+	"backend/pkg/email"
 	"backend/pkg/password"
 
 	"github.com/google/uuid"
 )
 
 var (
-	ErrUserExists         = errors.New("user already exists")
-	ErrInvalidCredentials = errors.New("invalid email or password")
-	ErrUserNotFound       = errors.New("user not found")
-	ErrInvalidRefreshToken = errors.New("invalid or expired refresh token")
+	ErrUserExists            = errors.New("user already exists")
+	ErrInvalidCredentials     = errors.New("invalid email or password")
+	ErrUserNotFound           = errors.New("user not found")
+	ErrInvalidRefreshToken    = errors.New("invalid or expired refresh token")
+	ErrInvalidVerificationToken = errors.New("invalid or expired verification token")
 )
 
 type AuthService struct {
-	userRepo         userRepo.UserRepository
-	workspaceService *workspaceService.Service
-	tokenGen         *token.Generator
-	accessExpiry     time.Duration
-	refreshExpiry    time.Duration
+	userRepo           userRepo.UserRepository
+	regTokenRepo       regTokenRepo.Repository
+	workspaceService   *workspaceService.Service
+	tokenGen           *token.Generator
+	emailSender        email.Sender
+	accessExpiry       time.Duration
+	refreshExpiry      time.Duration
+	regTokenLifetime   time.Duration
+	verificationBaseURL string
 }
 
 type LoginResponse struct {
@@ -37,23 +46,38 @@ type LoginResponse struct {
 	ExpiresIn    int         `json:"expires_in"`
 }
 
+// RegisterOutput — результат Register: либо ожидание подтверждения, либо сразу логин (реактивация).
+type RegisterOutput struct {
+	PendingVerification bool         `json:"-"` // true = отправлено письмо, пользователь не создан
+	Message             string       `json:"message,omitempty"`
+	LoginResponse       *LoginResponse `json:"-"` // при реактивации — сразу логин
+}
+
 func NewService(
 	userRepo userRepo.UserRepository,
+	regTokenRepo regTokenRepo.Repository,
 	workspaceService *workspaceService.Service,
 	tokenGen *token.Generator,
+	emailSender email.Sender,
 	accessExpiry time.Duration,
 	refreshExpiry time.Duration,
+	regTokenLifetime time.Duration,
+	verificationBaseURL string,
 ) *AuthService {
 	return &AuthService{
-		userRepo:         userRepo,
-		workspaceService: workspaceService,
-		tokenGen:         tokenGen,
-		accessExpiry:     accessExpiry,
-		refreshExpiry:    refreshExpiry,
+		userRepo:            userRepo,
+		regTokenRepo:        regTokenRepo,
+		workspaceService:    workspaceService,
+		tokenGen:            tokenGen,
+		emailSender:         emailSender,
+		accessExpiry:        accessExpiry,
+		refreshExpiry:       refreshExpiry,
+		regTokenLifetime:    regTokenLifetime,
+		verificationBaseURL: verificationBaseURL,
 	}
 }
 
-func (s *AuthService) Register(ctx context.Context, req model.RegisterRequest) (*LoginResponse, error) {
+func (s *AuthService) Register(ctx context.Context, req model.RegisterRequest) (*RegisterOutput, error) {
 	// 1. Активный пользователь с таким email уже есть — нельзя регистрироваться
 	existing, err := s.userRepo.FindByEmail(ctx, req.Email)
 	if err != nil {
@@ -63,13 +87,12 @@ func (s *AuthService) Register(ctx context.Context, req model.RegisterRequest) (
 		return nil, ErrUserExists
 	}
 
-	// 2. Хешируем пароль (нужно и для создания, и для реактивации)
 	hashedPassword, err := password.Hash(req.Password)
 	if err != nil {
 		return nil, err
 	}
 
-	// 3. Удалённый пользователь (soft delete) с таким email — реактивируем вместо создания
+	// 2. Удалённый пользователь (soft delete) — реактивируем без подтверждения email
 	anyStatus, err := s.userRepo.FindByEmailAnyStatus(ctx, req.Email)
 	if err != nil {
 		return nil, err
@@ -92,42 +115,109 @@ func (s *AuthService) Register(ctx context.Context, req model.RegisterRequest) (
 		if err != nil {
 			return nil, err
 		}
-		return &LoginResponse{
-			User:         anyStatus,
-			AccessToken:  accessToken,
-			RefreshToken: refreshToken,
-			ExpiresIn:    int(s.accessExpiry.Seconds()),
+		return &RegisterOutput{
+			PendingVerification: false,
+			LoginResponse: &LoginResponse{
+				User:         anyStatus,
+				AccessToken:  accessToken,
+				RefreshToken: refreshToken,
+				ExpiresIn:    int(s.accessExpiry.Seconds()),
+			},
 		}, nil
 	}
 
-	// 4. Создаем нового пользователя
+	// 3. Новая регистрация: сохраняем токен, отправляем письмо, пользователь НЕ создаётся
+	_ = s.regTokenRepo.DeleteByEmail(ctx, req.Email)
+
+	tok, err := generateSecureToken()
+	if err != nil {
+		return nil, fmt.Errorf("generate token: %w", err)
+	}
+
+	now := time.Now()
+	expiresAt := now.Add(s.regTokenLifetime)
+	rt := &model.RegistrationToken{
+		ID:           uuid.New().String(),
+		Email:        req.Email,
+		PasswordHash: hashedPassword,
+		Name:         &req.Name,
+		Token:        tok,
+		ExpiresAt:    expiresAt,
+		CreatedAt:    now,
+	}
+	if err := s.regTokenRepo.Create(ctx, rt); err != nil {
+		return nil, fmt.Errorf("save registration token: %w", err)
+	}
+
+	verificationLink := s.verificationBaseURL + "/auth/verify-email?token=" + tok
+	expiresInHours := int(s.regTokenLifetime.Hours())
+	msg := email.BuildVerificationEmail(req.Email, verificationLink, expiresInHours)
+	go func() {
+		_ = s.emailSender.Send(context.Background(), msg)
+	}()
+
+	return &RegisterOutput{
+		PendingVerification: true,
+		Message:             "На вашу почту отправлена ссылка для подтверждения регистрации",
+	}, nil
+}
+
+func generateSecureToken() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+// VerifyEmail подтверждает регистрацию по токену из ссылки. Создаёт пользователя и возвращает логин.
+func (s *AuthService) VerifyEmail(ctx context.Context, token string) (*LoginResponse, error) {
+	rt, err := s.regTokenRepo.FindByToken(ctx, token)
+	if err != nil || rt == nil {
+		return nil, ErrInvalidVerificationToken
+	}
+	if time.Now().After(rt.ExpiresAt) {
+		_ = s.regTokenRepo.DeleteByToken(ctx, token)
+		return nil, ErrInvalidVerificationToken
+	}
+
+	// Проверяем, что пользователь с таким email ещё не создан
+	existing, err := s.userRepo.FindByEmail(ctx, rt.Email)
+	if err != nil {
+		return nil, err
+	}
+	if existing != nil {
+		_ = s.regTokenRepo.DeleteByToken(ctx, token)
+		return nil, ErrUserExists
+	}
+
+	// Создаём пользователя
 	now := time.Now()
 	user := &model.User{
 		ID:        uuid.New().String(),
-		Email:     req.Email,
-		Password:  hashedPassword,
-		Name:      &req.Name,
+		Email:     rt.Email,
+		Password:  rt.PasswordHash,
+		Name:      rt.Name,
 		Role:      model.UserRoleUser,
 		Status:    userStatusPtr(model.UserStatusActive),
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
 	if err := s.userRepo.Create(ctx, user); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create user: %w", err)
 	}
 
-	// 5. Создаем базовый workspace для пользователя
+	// Создаём базовый workspace
 	defaultName := "My Workspace"
 	if user.Name != nil {
 		defaultName = *user.Name + "'s Workspace"
 	}
-	_, err = s.workspaceService.Create(ctx, model.CreateWorkspaceDto{
+	_, _ = s.workspaceService.Create(ctx, model.CreateWorkspaceDto{
 		Name:  defaultName,
 		Color: stringPtr("#3B82F6"),
 	}, user.ID)
-	if err != nil {
-		fmt.Printf("Failed to create default workspace for user %s: %v\n", user.ID, err)
-	}
+
+	_ = s.regTokenRepo.DeleteByToken(ctx, token)
 
 	accessToken, err := s.tokenGen.Generate(user.ID, string(user.Role))
 	if err != nil {

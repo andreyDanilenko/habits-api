@@ -1,0 +1,87 @@
+package email
+
+import (
+	"bytes"
+	"fmt"
+	"html/template"
+)
+
+// VerificationEmailData — данные для письма подтверждения регистрации.
+type VerificationEmailData struct {
+	VerificationLink string
+	ExpiresInHours   int
+}
+
+// BuildVerificationEmail формирует subject и body для письма подтверждения.
+// Логика формирования письма отделена от отправки (Sender).
+func BuildVerificationEmail(to, verificationLink string, expiresInHours int) *Message {
+	data := VerificationEmailData{
+		VerificationLink: verificationLink,
+		ExpiresInHours:   expiresInHours,
+	}
+
+	body := buildVerificationBody(data)
+	return &Message{
+		To:      to,
+		Subject: "Подтвердите регистрацию",
+		Body:    body,
+	}
+}
+
+func buildVerificationBody(data VerificationEmailData) string {
+	tpl := `<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Подтвердите регистрацию</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f1f5f9; font-size: 16px; line-height: 1.5; color: #1e293b;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color: #f1f5f9; padding: 24px 0;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="600" cellspacing="0" cellpadding="0" style="max-width: 600px; background-color: #ffffff; border-radius: 12px; box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1); overflow: hidden;">
+          <!-- Header -->
+          <tr>
+            <td style="background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); padding: 32px 40px; text-align: center;">
+              <h1 style="margin: 0; font-size: 24px; font-weight: 700; color: #ffffff; letter-spacing: -0.025em;">HabitFlow</h1>
+              <p style="margin: 8px 0 0 0; font-size: 14px; color: rgba(255,255,255,0.9);">Подтверждение регистрации</p>
+            </td>
+          </tr>
+          <!-- Content -->
+          <tr>
+            <td style="padding: 40px;">
+              <p style="margin: 0 0 24px 0; color: #1e293b; font-size: 16px;">Здравствуйте!</p>
+              <p style="margin: 0 0 24px 0; color: #475569; font-size: 16px;">Вы зарегистрировались в HabitFlow. Нажмите кнопку ниже, чтобы подтвердить email и завершить регистрацию.</p>
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+                <tr>
+                  <td align="center" style="padding: 24px 0;">
+                    <a href="{{.VerificationLink}}" style="display: inline-block; padding: 14px 32px; background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); color: #ffffff !important; font-size: 16px; font-weight: 600; text-decoration: none; border-radius: 8px; box-shadow: 0 4px 6px -1px rgba(99,102,241,0.3);">Подтвердить email</a>
+                  </td>
+                </tr>
+              </table>
+              <p style="margin: 0 0 8px 0; color: #94a3b8; font-size: 13px;">Ссылка действительна {{.ExpiresInHours}} ч.</p>
+              <p style="margin: 0; color: #94a3b8; font-size: 13px;">Если кнопка не работает, скопируйте ссылку:</p>
+              <p style="margin: 8px 0 0 0; word-break: break-all;"><a href="{{.VerificationLink}}" style="color: #6366f1; text-decoration: underline;">{{.VerificationLink}}</a></p>
+            </td>
+          </tr>
+          <!-- Footer -->
+          <tr>
+            <td style="padding: 24px 40px; background-color: #f8fafc; border-top: 1px solid #e2e8f0;">
+              <p style="margin: 0; color: #94a3b8; font-size: 13px;">Если вы не регистрировались в HabitFlow, проигнорируйте это письмо.</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`
+	t, err := template.New("verification").Parse(tpl)
+	if err != nil {
+		return fmt.Sprintf("<p>Подтвердите регистрацию: <a href=\"%s\">%s</a></p>", data.VerificationLink, data.VerificationLink)
+	}
+	var buf bytes.Buffer
+	_ = t.Execute(&buf, data)
+	return buf.String()
+}

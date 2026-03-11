@@ -41,6 +41,18 @@ func docLogin(h *Handler) gin.HandlerFunc { return h.Login }
 // @Router       /auth/register [post]
 func docRegister(h *Handler) gin.HandlerFunc { return h.Register }
 
+// docVerifyEmail wraps VerifyEmail for Swagger.
+// @Summary      Verify email and complete registration
+// @Description  Confirm registration by clicking the link from email. Creates user and returns tokens.
+// @Tags         auth
+// @Produce      json
+// @Param        token  query  string  true  "Verification token from email link"
+// @Success      200   {object}  model.LoginResponse  "Email verified, user logged in"
+// @Failure      400   {object}  response.ErrorResponse  "Invalid or expired token"
+// @Failure      409   {object}  response.ErrorResponse  "User already exists"
+// @Router       /auth/verify-email [get]
+func docVerifyEmail(h *Handler) gin.HandlerFunc { return h.VerifyEmail }
+
 // docLogout wraps Logout for Swagger.
 // @Summary      Logout (clear cookie)
 // @Tags         auth

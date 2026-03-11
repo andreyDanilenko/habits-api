@@ -12,6 +12,7 @@ type Config struct {
 	Database DatabaseConfig
 	Logs     LogsConfig
 	Auth     AuthConfig
+	Email    EmailConfig
 }
 
 type ServerConfig struct {
@@ -31,11 +32,21 @@ type DatabaseConfig struct {
 }
 
 type AuthConfig struct {
-	JWTSecretKey      string        `env:"JWT_SECRET_KEY,required"`
-	JWTExpiration     time.Duration `env:"JWT_EXPIRATION" envDefault:"15m"`   // Access: 15 мин
-	RefreshExpiration time.Duration `env:"REFRESH_EXPIRATION" envDefault:"240h"` // Refresh: 10 дней
-	CookieDomain      string        `env:"COOKIE_DOMAIN"`
-	SecureCookies     bool          `env:"SECURE_COOKIES" envDefault:"false"`
+	JWTSecretKey              string        `env:"JWT_SECRET_KEY,required"`
+	JWTExpiration             time.Duration `env:"JWT_EXPIRATION" envDefault:"15m"`   // Access: 15 мин
+	RefreshExpiration         time.Duration `env:"REFRESH_EXPIRATION" envDefault:"240h"` // Refresh: 10 дней
+	CookieDomain              string        `env:"COOKIE_DOMAIN"`
+	SecureCookies             bool          `env:"SECURE_COOKIES" envDefault:"false"`
+	RegistrationTokenLifetime time.Duration `env:"REGISTRATION_TOKEN_LIFETIME" envDefault:"24h"` // Время жизни ссылки подтверждения
+	VerificationBaseURL       string        `env:"VERIFICATION_BASE_URL"`                        // Базовый URL для ссылки (например https://app.example.com)
+}
+
+type EmailConfig struct {
+	SMTPHost     string `env:"SMTP_HOST"`
+	SMTPPort     string `env:"SMTP_PORT"`
+	SMTPUsername string `env:"SMTP_USERNAME"`
+	SMTPPassword string `env:"SMTP_PASSWORD"`
+	Enabled      bool   `env:"EMAIL_ENABLED" envDefault:"false"`
 }
 
 type LogsConfig struct {
@@ -64,11 +75,20 @@ func Load() (*Config, error) {
 			Dir: getEnv("LOGS_DIR", "./logs"),
 		},
 		Auth: AuthConfig{
-			JWTSecretKey:      getEnv("JWT_SECRET_KEY", ""),
-			JWTExpiration:     getEnvDuration("JWT_EXPIRATION", 15*time.Minute),
-			RefreshExpiration: getEnvDuration("REFRESH_EXPIRATION", 240*time.Hour),
-			CookieDomain:      getEnv("COOKIE_DOMAIN", ""),
-			SecureCookies:     getEnvBool("SECURE_COOKIES", true),
+			JWTSecretKey:              getEnv("JWT_SECRET_KEY", ""),
+			JWTExpiration:             getEnvDuration("JWT_EXPIRATION", 15*time.Minute),
+			RefreshExpiration:         getEnvDuration("REFRESH_EXPIRATION", 240*time.Hour),
+			CookieDomain:              getEnv("COOKIE_DOMAIN", ""),
+			SecureCookies:             getEnvBool("SECURE_COOKIES", true),
+			RegistrationTokenLifetime: getEnvDuration("REGISTRATION_TOKEN_LIFETIME", 24*time.Hour),
+			VerificationBaseURL:       getEnv("VERIFICATION_BASE_URL", "http://localhost:3000"),
+		},
+		Email: EmailConfig{
+			SMTPHost:     getEnv("SMTP_HOST", ""),
+			SMTPPort:     getEnv("SMTP_PORT", "587"),
+			SMTPUsername: getEnv("SMTP_USERNAME", ""),
+			SMTPPassword: getEnv("SMTP_PASSWORD", ""),
+			Enabled:      getEnvBool("EMAIL_ENABLED", false),
 		},
 	}, nil
 }

@@ -25,6 +25,7 @@ import (
 	notesRepo "backend/internal/repository/notes"
 	permissionRepo "backend/internal/repository/permission"
 	projectRepo "backend/internal/repository/project"
+	regTokenRepo "backend/internal/repository/registration_token"
 	userRepo "backend/internal/repository/user"
 	userPrefsRepo "backend/internal/repository/user_preferences"
 	workspaceRepo "backend/internal/repository/workspace"
@@ -40,6 +41,7 @@ import (
 	projectService "backend/internal/service/project"
 	workspaceService "backend/internal/service/workspace"
 	"backend/pkg/auth/token"
+	"backend/pkg/email"
 	"backend/pkg/http/cookies"
 	"backend/pkg/password"
 	"backend/pkg/response"
@@ -103,8 +105,32 @@ func NewContainer(db *sql.DB, gormDB *gorm.DB, cfg *config.Config) (*Container, 
 
 	// Auth
 	userRepository := userRepo.NewRepository(db)
+	regTokenRepository := regTokenRepo.NewRepository(db)
 	tokenGen := token.NewGenerator(cfg.Auth.JWTSecretKey, cfg.Auth.JWTExpiration)
-	authSvc := authService.NewService(userRepository, workspaceSvc, tokenGen, cfg.Auth.JWTExpiration, cfg.Auth.RefreshExpiration)
+
+	var emailSender email.Sender
+	if cfg.Email.Enabled && cfg.Email.SMTPHost != "" {
+		emailSender = email.NewSMTPSender(email.SMTPConfig{
+			Host:     cfg.Email.SMTPHost,
+			Port:     cfg.Email.SMTPPort,
+			Username: cfg.Email.SMTPUsername,
+			Password: cfg.Email.SMTPPassword,
+		})
+	} else {
+		emailSender = email.NewNoopSender()
+	}
+
+	authSvc := authService.NewService(
+		userRepository,
+		regTokenRepository,
+		workspaceSvc,
+		tokenGen,
+		emailSender,
+		cfg.Auth.JWTExpiration,
+		cfg.Auth.RefreshExpiration,
+		cfg.Auth.RegistrationTokenLifetime,
+		cfg.Auth.VerificationBaseURL,
+	)
 
 	cookieManager := cookies.NewManagerFromEnv()
 	authHdlr := authHandler.NewHandler(authSvc, cookieManager, responder, validate)
