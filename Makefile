@@ -12,4 +12,9 @@ build: docs
 migrate-force-21:
 	go run ./cmd/migrate_force
 
-.PHONY: docs generate build migrate-force-21
+# Генерация bcrypt-хеша для пароля (для ручного UPDATE в БД)
+# Использование: make hash-password PWD='MyPass123!'
+hash-password:
+	@go run ./scripts/hash-password '$(PWD)'
+
+.PHONY: docs generate build migrate-force-21 hash-password
