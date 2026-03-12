@@ -11,6 +11,7 @@ var (
 	_ = (*model.LoginRequest)(nil)
 	_ = (*model.LoginResponse)(nil)
 	_ = (*model.RegisterRequest)(nil)
+	_ = (*model.ChangePasswordRequest)(nil)
 	_ = (*model.User)(nil)
 	_ = (*response.ErrorResponse)(nil)
 )
@@ -79,3 +80,17 @@ func docMe(h *Handler) gin.HandlerFunc { return h.Me }
 // @Success      200  {object}  map[string]interface{}
 // @Router       /auth/refresh [post]
 func docRefresh(h *Handler) gin.HandlerFunc { return h.Refresh }
+
+// docChangePassword wraps ChangePassword for Swagger.
+// @Summary      Change password
+// @Description  Change current user password. Requires current password verification.
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Param        body  body  model.ChangePasswordRequest  true  "Current and new password"
+// @Success      200   {object}  map[string]interface{}  "Password changed"
+// @Failure      400   {object}  response.ErrorResponse  "Validation error"
+// @Failure      401   {object}  response.ErrorResponse  "Wrong current password"
+// @Router       /auth/change-password [post]
+// @Security     BearerAuth
+func docChangePassword(h *Handler) gin.HandlerFunc { return h.ChangePassword }

@@ -22,11 +22,12 @@ import (
 )
 
 var (
-	ErrUserExists            = errors.New("user already exists")
-	ErrInvalidCredentials     = errors.New("invalid email or password")
-	ErrUserNotFound           = errors.New("user not found")
-	ErrInvalidRefreshToken    = errors.New("invalid or expired refresh token")
+	ErrUserExists              = errors.New("user already exists")
+	ErrInvalidCredentials      = errors.New("invalid email or password")
+	ErrUserNotFound            = errors.New("user not found")
+	ErrInvalidRefreshToken     = errors.New("invalid or expired refresh token")
 	ErrInvalidVerificationToken = errors.New("invalid or expired verification token")
+	ErrWrongCurrentPassword    = errors.New("current password is incorrect")
 )
 
 type AuthService struct {
@@ -342,6 +343,34 @@ func (s *AuthService) Refresh(ctx context.Context, refreshTokenString string) (*
 
 // Logout - выход (удаление cookies на стороне handler)
 func (s *AuthService) Logout(ctx context.Context, userID string) error {
+	return nil
+}
+
+// ChangePassword меняет пароль текущего пользователя. Требует проверки текущего пароля.
+func (s *AuthService) ChangePassword(ctx context.Context, userID string, currentPassword, newPassword string) error {
+	user, err := s.userRepo.FindByID(ctx, userID)
+	if err != nil || user == nil {
+		return ErrUserNotFound
+	}
+	if user.Status != nil && *user.Status != model.UserStatusActive {
+		return ErrUserNotFound
+	}
+
+	if !password.Check(currentPassword, user.Password) {
+		return ErrWrongCurrentPassword
+	}
+
+	hashedPassword, err := password.Hash(newPassword)
+	if err != nil {
+		return fmt.Errorf("hash password: %w", err)
+	}
+
+	user.Password = hashedPassword
+	user.UpdatedAt = time.Now()
+	if err := s.userRepo.Update(ctx, user); err != nil {
+		return fmt.Errorf("update user: %w", err)
+	}
+
 	return nil
 }
 

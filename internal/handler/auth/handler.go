@@ -61,6 +61,7 @@ func (h *Handler) registerPublicRoutesWithLimiters(r *gin.RouterGroup, cfg *midd
 
 func (h *Handler) RegisterProtectedRoutes(r *gin.RouterGroup) {
 	r.GET(RouteMe, docMe(h))
+	r.POST(RouteChangePassword, docChangePassword(h))
 }
 
 type Handler struct {
@@ -260,6 +261,73 @@ func (h *Handler) VerifyEmail(c *gin.Context) {
 		"user":       resp.User,
 		"expires_in": resp.ExpiresIn,
 	})
+}
+
+func (h *Handler) ChangePassword(c *gin.Context) {
+	userID, ok := middleware.GetUserIDFromGin(c)
+	if !ok {
+		h.responder.Unauthorized(c, "Authentication required")
+		return
+	}
+
+	var req model.ChangePasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.responder.BadRequest(c, "Invalid request")
+		return
+	}
+
+	req.CurrentPassword = strings.TrimSpace(req.CurrentPassword)
+	req.NewPassword = strings.TrimSpace(req.NewPassword)
+
+	if err := h.validate.Struct(req); err != nil {
+		validationErrors := make(map[string]string)
+		if validationErr, ok := err.(validator.ValidationErrors); ok {
+			for _, fieldErr := range validationErr {
+				field := strings.ToLower(fieldErr.Field())
+				tag := fieldErr.Tag()
+				switch fieldErr.Field() {
+				case "CurrentPassword":
+					if tag == "required" {
+						validationErrors[field] = "Current password is required"
+					}
+				case "NewPassword":
+					if tag == "required" {
+						validationErrors[field] = "New password is required"
+					} else if tag == "min" {
+						validationErrors[field] = fmt.Sprintf("Password must be at least %s characters", fieldErr.Param())
+					} else if tag == "password_format" {
+						validationErrors[field] = "Password must contain letters, numbers and special characters (@$!%*#?&), min 8 chars"
+					}
+				default:
+					validationErrors[field] = fieldErr.Error()
+				}
+			}
+		} else {
+			validationErrors["general"] = err.Error()
+		}
+		h.responder.WriteErrorWithCode(c, 400, "VALIDATION_ERROR", "Validation failed", validationErrors)
+		return
+	}
+
+	if req.CurrentPassword == req.NewPassword {
+		h.responder.WriteErrorWithCode(c, 400, "SAME_PASSWORD", "New password must differ from current", map[string]string{"newPassword": "New password must differ from current"})
+		return
+	}
+
+	err := h.service.ChangePassword(c.Request.Context(), userID, req.CurrentPassword, req.NewPassword)
+	if err != nil {
+		switch err {
+		case authService.ErrWrongCurrentPassword:
+			h.responder.WriteErrorWithCode(c, 400, "WRONG_CURRENT_PASSWORD", "Current password is incorrect", map[string]string{"currentPassword": "Current password is incorrect"})
+		case authService.ErrUserNotFound:
+			h.responder.Unauthorized(c, "User not found")
+		default:
+			h.responder.InternalServerError(c, "Failed to change password")
+		}
+		return
+	}
+
+	h.responder.SuccessWithMessage(c, "Password changed successfully")
 }
 
 func (h *Handler) Refresh(c *gin.Context) {

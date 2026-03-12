@@ -41,6 +41,11 @@ type LoginRequest struct {
 	Email    string `json:"email" validate:"required,email"`
 	Password string `json:"password" validate:"required"`
 }
+
+type ChangePasswordRequest struct {
+	CurrentPassword string `json:"currentPassword" validate:"required"`
+	NewPassword     string `json:"newPassword" validate:"required,min=8,password_format"`
+}
 type LoginResponse struct {
 	User        User   `json:"user"`
 	AccessToken string `json:"-"`
