@@ -1,6 +1,6 @@
 -- =============================================================================
 -- Сводный файл всех миграций (только UP, без DROP)
--- Порядок: 000001 .. 000021, constraints/01, constraints/02, 000022
+-- Порядок: 000001 .. 000022, 000023, 000025, 000026
 -- =============================================================================
 
 -- ========== 000001_create_request_logs ==========
@@ -882,3 +882,50 @@ WHERE NOT EXISTS (
     SELECT 1 FROM user_role_assignments ura
     WHERE ura.user_id = w.owner_id AND ura.workspace_id = w.id
 );
+
+-- ========== 000023_registration_tokens ==========
+-- Таблица ожидающих подтверждения регистраций.
+-- Пользователь не создаётся в users до подтверждения email по ссылке.
+CREATE TABLE IF NOT EXISTS registration_tokens (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email VARCHAR(255) NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    name VARCHAR(100),
+    token VARCHAR(255) NOT NULL UNIQUE,
+    expires_at TIMESTAMP NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_registration_tokens_token ON registration_tokens(token);
+CREATE INDEX IF NOT EXISTS idx_registration_tokens_email ON registration_tokens(email);
+CREATE INDEX IF NOT EXISTS idx_registration_tokens_expires_at ON registration_tokens(expires_at);
+
+-- ========== 000025_invitations ==========
+-- Приглашения пользователей в workspace
+CREATE TABLE IF NOT EXISTS invitations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    email VARCHAR(255) NOT NULL,
+    invited_by UUID NOT NULL REFERENCES users(id),
+    system_role VARCHAR(20) NOT NULL CHECK (system_role IN ('MEMBER', 'GUEST')),
+    status VARCHAR(20) NOT NULL DEFAULT 'PENDING'
+        CHECK (status IN ('PENDING', 'ACCEPTED', 'EXPIRED', 'CANCELLED')),
+    token VARCHAR(255) UNIQUE NOT NULL,
+    expires_at TIMESTAMP NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    accepted_at TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_invitations_token ON invitations(token);
+CREATE INDEX IF NOT EXISTS idx_invitations_email ON invitations(email);
+CREATE INDEX IF NOT EXISTS idx_invitations_status ON invitations(status);
+CREATE INDEX IF NOT EXISTS idx_invitations_workspace ON invitations(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_invitations_expires ON invitations(expires_at) WHERE status = 'PENDING';
+
+COMMENT ON TABLE invitations IS 'Приглашения пользователей в workspace';
+COMMENT ON COLUMN invitations.system_role IS 'Системная роль: MEMBER или GUEST';
+COMMENT ON COLUMN invitations.token IS 'Уникальный токен для ссылки-приглашения';
+COMMENT ON COLUMN invitations.status IS 'PENDING, ACCEPTED, EXPIRED, CANCELLED';
+
+-- ========== 000026_registration_tokens_invite_token ==========
+ALTER TABLE registration_tokens ADD COLUMN IF NOT EXISTS invite_token VARCHAR(255);
