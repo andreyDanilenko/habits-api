@@ -16,6 +16,7 @@ import (
 	workspaceRepo "backend/internal/repository/workspace"
 	permService "backend/internal/service/permission"
 	"backend/pkg/email"
+	"backend/pkg/realtime"
 
 	"github.com/google/uuid"
 )
@@ -34,6 +35,7 @@ type Service struct {
 	permSvc       *permService.Service
 	emailSender   email.Sender
 	cfg           *config.Config
+	publisher     realtime.Publisher
 }
 
 func NewService(
@@ -43,7 +45,11 @@ func NewService(
 	permSvc *permService.Service,
 	emailSender email.Sender,
 	cfg *config.Config,
+	publisher realtime.Publisher,
 ) *Service {
+	if publisher == nil {
+		publisher = realtime.NoopPublisher{}
+	}
 	return &Service{
 		invRepo:       invRepo,
 		workspaceRepo: workspaceRepo,
@@ -51,7 +57,38 @@ func NewService(
 		permSvc:       permSvc,
 		emailSender:   emailSender,
 		cfg:           cfg,
+		publisher:     publisher,
 	}
+}
+
+func (s *Service) emitInvitationAccepted(ctx context.Context, workspaceID, userID string, inv *model.Invitation) {
+	ch := realtime.WorkspaceChannel(workspaceID)
+	event := realtime.Event{
+		EventType: "invitation.accepted",
+		Target:    realtime.Target{Type: "workspace", ID: workspaceID},
+		Payload: map[string]interface{}{
+			"workspaceId": workspaceID,
+			"userId":      userID,
+			"email":       inv.Email,
+			"role":        inv.SystemRole,
+		},
+		Timestamp: time.Now().UnixMilli(),
+	}
+	_ = s.publisher.Publish(ctx, ch, event)
+	// Также отправить приглашённому пользователю
+	userCh := realtime.UserChannel(userID)
+	userEvent := realtime.Event{
+		EventType: "invitation.accepted",
+		Target:    realtime.Target{Type: "user", ID: userID},
+		Payload: map[string]interface{}{
+			"workspaceId": workspaceID,
+			"userId":      userID,
+			"email":       inv.Email,
+			"role":        inv.SystemRole,
+		},
+		Timestamp: time.Now().UnixMilli(),
+	}
+	_ = s.publisher.Publish(ctx, userCh, userEvent)
 }
 
 func generateToken() (string, error) {
@@ -313,7 +350,7 @@ func (s *Service) Accept(ctx context.Context, token string, currentUser *model.U
 		if err := s.addUserToWorkspace(ctx, inv, currentUser.ID); err != nil {
 			return nil, err
 		}
-		if err := s.invRepo.MarkAccepted(ctx, inv.ID); err != nil {
+		if err := s.markAcceptedAndEmit(ctx, inv, currentUser.ID); err != nil {
 			return nil, err
 		}
 		baseURL := strings.TrimSuffix(s.cfg.Auth.VerificationBaseURL, "/")
@@ -353,6 +390,14 @@ func (s *Service) addUserToWorkspace(ctx context.Context, inv *model.Invitation,
 	return s.permSvc.AssignRoleByName(ctx, userID, inv.WorkspaceID, inv.SystemRole, inv.InvitedBy)
 }
 
+func (s *Service) markAcceptedAndEmit(ctx context.Context, inv *model.Invitation, userID string) error {
+	if err := s.invRepo.MarkAccepted(ctx, inv.ID); err != nil {
+		return err
+	}
+	s.emitInvitationAccepted(ctx, inv.WorkspaceID, userID, inv)
+	return nil
+}
+
 func (s *Service) AcceptAfterRegistration(ctx context.Context, inviteToken, userID string) error {
 	if inviteToken == "" {
 		return nil
@@ -377,5 +422,5 @@ func (s *Service) AcceptAfterRegistration(ctx context.Context, inviteToken, user
 	if err := s.addUserToWorkspace(ctx, inv, userID); err != nil {
 		return err
 	}
-	return s.invRepo.MarkAccepted(ctx, inv.ID)
+	return s.markAcceptedAndEmit(ctx, inv, userID)
 }

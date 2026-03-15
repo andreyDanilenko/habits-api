@@ -13,6 +13,11 @@ type Config struct {
 	Logs     LogsConfig
 	Auth     AuthConfig
 	Email    EmailConfig
+	Realtime RealtimeConfig
+}
+
+type RealtimeConfig struct {
+	RedisURL string `env:"REDIS_URL"` // e.g. redis://localhost:6379, empty = disabled
 }
 
 type ServerConfig struct {
@@ -91,6 +96,9 @@ func Load() (*Config, error) {
 			SMTPUsername: getEnv("SMTP_USERNAME", ""),
 			SMTPPassword: getEnv("SMTP_PASSWORD", ""),
 			Enabled:      getEnvBool("EMAIL_ENABLED", false),
+		},
+		Realtime: RealtimeConfig{
+			RedisURL: getEnv("REDIS_URL", ""),
 		},
 	}, nil
 }

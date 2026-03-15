@@ -4,11 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"time"
 
 	"backend/internal/model"
 	crmRepo "backend/internal/repository/crm"
 	userRepo "backend/internal/repository/user"
 	workspaceService "backend/internal/service/workspace"
+	"backend/pkg/realtime"
 
 	"github.com/google/uuid"
 )
@@ -23,13 +25,28 @@ var (
 )
 
 type Service struct {
-	repo     *crmRepo.Repository
-	wsSvc    *workspaceService.Service
-	userRepo *userRepo.PostgresUserRepository
+	repo      *crmRepo.Repository
+	wsSvc     *workspaceService.Service
+	userRepo  *userRepo.PostgresUserRepository
+	publisher realtime.Publisher
 }
 
-func NewService(repo *crmRepo.Repository, wsSvc *workspaceService.Service, userRepo *userRepo.PostgresUserRepository) *Service {
-	return &Service{repo: repo, wsSvc: wsSvc, userRepo: userRepo}
+func NewService(repo *crmRepo.Repository, wsSvc *workspaceService.Service, userRepo *userRepo.PostgresUserRepository, publisher realtime.Publisher) *Service {
+	if publisher == nil {
+		publisher = realtime.NoopPublisher{}
+	}
+	return &Service{repo: repo, wsSvc: wsSvc, userRepo: userRepo, publisher: publisher}
+}
+
+func (s *Service) emitDealEvent(ctx context.Context, workspaceID, eventType string, payload map[string]interface{}) {
+	ch := realtime.WorkspaceChannel(workspaceID)
+	event := realtime.Event{
+		EventType: eventType,
+		Target:    realtime.Target{Type: "workspace", ID: workspaceID},
+		Payload:   payload,
+		Timestamp: time.Now().UnixMilli(),
+	}
+	_ = s.publisher.Publish(ctx, ch, event)
 }
 
 func (s *Service) resolveUserName(ctx context.Context, userID string) string {
@@ -417,6 +434,11 @@ func (s *Service) DealCreate(ctx context.Context, workspaceID string, d *model.D
 		EntityID:   d.ID,
 		Title:      title,
 	}, userID)
+	payload := map[string]interface{}{"deal": d}
+	if stageName != "" {
+		payload["stageName"] = stageName
+	}
+	s.emitDealEvent(ctx, workspaceID, "deal.created", payload)
 	return nil
 }
 
@@ -425,20 +447,22 @@ func (s *Service) DealUpdate(ctx context.Context, workspaceID string, d *model.D
 	if err := s.repo.DealUpdate(ctx, workspaceID, d); err != nil {
 		return err
 	}
+	stageName := ""
+	stageFromName, stageToName := "", ""
 	if oldDeal != nil && oldDeal.StageID != d.StageID {
 		oldStage, _ := s.repo.StageGet(ctx, uuid.MustParse(oldDeal.StageID))
 		newStage, _ := s.repo.StageGet(ctx, uuid.MustParse(d.StageID))
-		fromName, toName := "", ""
 		if oldStage != nil {
-			fromName = oldStage.Name
+			stageFromName = oldStage.Name
 		}
 		if newStage != nil {
-			toName = newStage.Name
+			stageToName = newStage.Name
+			stageName = stageToName
 		}
-		title := "Сделка перешла: " + fromName + " → " + toName
+		title := "Сделка перешла: " + stageFromName + " → " + stageToName
 		meta := map[string]interface{}{
-			"fromStage": map[string]interface{}{"id": oldDeal.StageID, "name": fromName},
-			"toStage":   map[string]interface{}{"id": d.StageID, "name": toName},
+			"fromStage": map[string]interface{}{"id": oldDeal.StageID, "name": stageFromName},
+			"toStage":   map[string]interface{}{"id": d.StageID, "name": stageToName},
 			"dealValue": d.Budget,
 		}
 		_ = s.CreateSystemActivity(ctx, workspaceID, &model.CrmActivity{
@@ -448,14 +472,33 @@ func (s *Service) DealUpdate(ctx context.Context, workspaceID string, d *model.D
 			Title:      title,
 			Metadata:   meta,
 		}, userID)
+	} else if stageID, err := uuid.Parse(d.StageID); err == nil {
+		if st, _ := s.repo.StageGet(ctx, stageID); st != nil {
+			stageName = st.Name
+		}
 	}
+	payload := map[string]interface{}{"deal": d}
+	if stageName != "" {
+		payload["stageName"] = stageName
+	}
+	if stageFromName != "" || stageToName != "" {
+		payload["stageFromName"] = stageFromName
+		payload["stageToName"] = stageToName
+	}
+	s.emitDealEvent(ctx, workspaceID, "deal.updated", payload)
 	return nil
 }
 
 func (s *Service) DealDelete(ctx context.Context, workspaceID, id string) error {
 	wsID, _ := uuid.Parse(workspaceID)
 	uid, _ := uuid.Parse(id)
-	return s.repo.DealDelete(ctx, uid, wsID)
+	if err := s.repo.DealDelete(ctx, uid, wsID); err != nil {
+		return err
+	}
+	s.emitDealEvent(ctx, workspaceID, "deal.deleted", map[string]interface{}{
+		"dealId": id,
+	})
+	return nil
 }
 
 // Activity (SPEC_BACK_2)

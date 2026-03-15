@@ -12,6 +12,7 @@ import (
 	loggerHandler "backend/internal/handler/logger"
 	masterHandler "backend/internal/handler/master"
 	notesHandler "backend/internal/handler/notes"
+	notificationHandler "backend/internal/handler/notification"
 	permissionHandler "backend/internal/handler/permission"
 	projectHandler "backend/internal/handler/project"
 	swaggerHandler "backend/internal/handler/swagger"
@@ -25,6 +26,7 @@ import (
 	loggerRepo "backend/internal/repository/logger"
 	masterRepo "backend/internal/repository/master"
 	notesRepo "backend/internal/repository/notes"
+	notificationRepo "backend/internal/repository/notification"
 	permissionRepo "backend/internal/repository/permission"
 	projectRepo "backend/internal/repository/project"
 	regTokenRepo "backend/internal/repository/registration_token"
@@ -40,6 +42,7 @@ import (
 	loggerService "backend/internal/service/logger"
 	masterService "backend/internal/service/master"
 	notesService "backend/internal/service/notes"
+	notificationService "backend/internal/service/notification"
 	permissionService "backend/internal/service/permission"
 	projectService "backend/internal/service/project"
 	workspaceService "backend/internal/service/workspace"
@@ -47,8 +50,10 @@ import (
 	"backend/pkg/email"
 	"backend/pkg/http/cookies"
 	"backend/pkg/password"
+	"backend/pkg/realtime"
 	"backend/pkg/response"
 	"database/sql"
+	"log"
 	"net/http"
 	"time"
 
@@ -67,8 +72,9 @@ type Container struct {
 	WorkspaceService *workspaceService.Service
 	MasterHandler    *masterHandler.Handler
 	CrmHandler       *crmHandler.Handler
-	NotesHandler     *notesHandler.Handler
-	ProjectHandler   *projectHandler.Handler
+	NotesHandler        *notesHandler.Handler
+	NotificationHandler *notificationHandler.Handler
+	ProjectHandler      *projectHandler.Handler
 	HabitsHandler    *habitsHandler.Handler
 	JournalHandler   *journalHandler.Handler
 	LoggerHandler      *loggerHandler.Handler
@@ -125,9 +131,20 @@ func NewContainer(db *sql.DB, gormDB *gorm.DB, cfg *config.Config) (*Container, 
 		emailSender = email.NewNoopSender()
 	}
 
+	// Realtime publisher (Redis)
+	var rtPublisher realtime.Publisher = realtime.NoopPublisher{}
+	if cfg.Realtime.RedisURL != "" {
+		if redisAdapter, err := realtime.NewRedisAdapter(cfg.Realtime.RedisURL); err == nil {
+			rtPublisher = realtime.NewRedisPublisher(redisAdapter)
+		} else {
+			// Redis unreachable — realtime events won't be delivered
+			log.Printf("[realtime] Redis connect failed: %v — notifications disabled", err)
+		}
+	}
+
 	// Invitation (нужен для auth — AcceptAfterRegistration при регистрации по invite)
 	invitationRepository := invitationRepo.NewRepository(db)
-	invitationSvc := invitationService.NewService(invitationRepository, workspaceRepository, userRepository, permSvc, emailSender, cfg)
+	invitationSvc := invitationService.NewService(invitationRepository, workspaceRepository, userRepository, permSvc, emailSender, cfg, rtPublisher)
 
 	authSvc := authService.NewService(
 		userRepository,
@@ -154,7 +171,7 @@ func NewContainer(db *sql.DB, gormDB *gorm.DB, cfg *config.Config) (*Container, 
 	masterHdlr := masterHandler.NewHandler(masterSvc, workspaceSvc, responder, validate)
 
 	crmRepository := crmRepo.NewRepository(db)
-	crmSvc := crmService.NewService(crmRepository, workspaceSvc, userRepository)
+	crmSvc := crmService.NewService(crmRepository, workspaceSvc, userRepository, rtPublisher)
 	crmHdlr := crmHandler.NewHandler(crmSvc, workspaceSvc, responder, validate)
 
 	// Notes module
@@ -164,7 +181,7 @@ func NewContainer(db *sql.DB, gormDB *gorm.DB, cfg *config.Config) (*Container, 
 
 	// Habits
 	habitsRepository := habitsRepo.NewRepository(db)
-	habitsSvc := habitsService.NewService(habitsRepository, workspaceRepository)
+	habitsSvc := habitsService.NewService(habitsRepository, workspaceRepository, rtPublisher)
 	habitsHdlr := habitsHandler.NewHandler(habitsSvc, responder, validate)
 
 	// Journal
@@ -187,6 +204,11 @@ func NewContainer(db *sql.DB, gormDB *gorm.DB, cfg *config.Config) (*Container, 
 
 	invitationHdlr := invitationHandler.NewHandler(invitationSvc, responder)
 
+	// Notifications (универсальный модуль: activity, chat, system)
+	notificationRepository := notificationRepo.NewRepository(db)
+	notificationSvc := notificationService.NewService(notificationRepository)
+	notificationHdlr := notificationHandler.NewHandler(notificationSvc, responder, validate)
+
 	return &Container{
 		Cfg:              cfg,
 		Router:           r,
@@ -196,8 +218,9 @@ func NewContainer(db *sql.DB, gormDB *gorm.DB, cfg *config.Config) (*Container, 
 		WorkspaceService: workspaceSvc,
 		MasterHandler:    masterHdlr,
 		CrmHandler:       crmHdlr,
-		NotesHandler:     notesHdlr,
-		ProjectHandler:   projectHdlr,
+		NotesHandler:        notesHdlr,
+		NotificationHandler: notificationHdlr,
+		ProjectHandler:      projectHdlr,
 		HabitsHandler:    habitsHdlr,
 		JournalHandler:   journalHdlr,
 		LoggerHandler:     loggerHdlr,
@@ -247,9 +270,10 @@ func (c *Container) RegisterRoutes(r *router.Router) {
 	protectedAuthGroup := protected.Group("/auth")
 	c.AuthHandler.RegisterProtectedRoutes(protectedAuthGroup)
 
-	// Me (текущий пользователь): права в workspace
+	// Me (текущий пользователь): права в workspace, уведомления
 	meGroup := protected.Group("/me")
 	meGroup.GET("/permissions", c.PermissionHandler.GetMyPermissions)
+	c.NotificationHandler.RegisterRoutes(meGroup)
 
 	// Workspace routes (and nested: master data, notes, permissions)
 	workspaceGroup := protected.Group("/workspaces")

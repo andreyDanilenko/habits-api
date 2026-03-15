@@ -9,12 +9,14 @@ import (
 type Manager struct {
 	secure   bool
 	sameSite http.SameSite
+	domain   string // e.g. "localhost" — куки доступны на всех портах
 }
 
-func NewManager(secure bool, sameSite http.SameSite) *Manager {
+func NewManager(secure bool, sameSite http.SameSite, domain string) *Manager {
 	return &Manager{
 		secure:   secure,
 		sameSite: sameSite,
+		domain:   domain,
 	}
 }
 
@@ -39,7 +41,8 @@ func NewManagerFromEnv() *Manager {
 		sameSite = http.SameSiteLaxMode
 	}
 
-	return NewManager(secure, sameSite)
+	domain := os.Getenv("COOKIE_DOMAIN")
+	return NewManager(secure, sameSite, domain)
 }
 
 // SetToken устанавливает cookie с токеном
@@ -52,6 +55,9 @@ func (m *Manager) SetToken(w http.ResponseWriter, name, token string, expires ti
 		Secure:   m.secure,
 		SameSite: m.sameSite,
 		Path:     "/",
+	}
+	if m.domain != "" {
+		cookie.Domain = m.domain
 	}
 
 	http.SetCookie(w, cookie)
@@ -76,6 +82,9 @@ func (m *Manager) Delete(w http.ResponseWriter, name string) {
 		Secure:   m.secure,
 		SameSite: m.sameSite,
 		Path:     "/",
+	}
+	if m.domain != "" {
+		cookie.Domain = m.domain
 	}
 	http.SetCookie(w, cookie)
 }

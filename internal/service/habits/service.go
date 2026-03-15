@@ -8,6 +8,7 @@ import (
 	"backend/internal/model"
 	habitsRepo "backend/internal/repository/habits"
 	workspaceRepo "backend/internal/repository/workspace"
+	"backend/pkg/realtime"
 
 	"github.com/google/uuid"
 )
@@ -19,12 +20,27 @@ var (
 )
 
 type Service struct {
-	repo    *habitsRepo.Repository
-	wsRepo  *workspaceRepo.Repository
+	repo      *habitsRepo.Repository
+	wsRepo    *workspaceRepo.Repository
+	publisher realtime.Publisher
 }
 
-func NewService(repo *habitsRepo.Repository, wsRepo *workspaceRepo.Repository) *Service {
-	return &Service{repo: repo, wsRepo: wsRepo}
+func NewService(repo *habitsRepo.Repository, wsRepo *workspaceRepo.Repository, publisher realtime.Publisher) *Service {
+	if publisher == nil {
+		publisher = realtime.NoopPublisher{}
+	}
+	return &Service{repo: repo, wsRepo: wsRepo, publisher: publisher}
+}
+
+func (s *Service) emitHabitEvent(ctx context.Context, workspaceID, eventType string, payload map[string]interface{}) {
+	ch := realtime.WorkspaceChannel(workspaceID)
+	event := realtime.Event{
+		EventType: eventType,
+		Target:    realtime.Target{Type: "workspace", ID: workspaceID},
+		Payload:   payload,
+		Timestamp: time.Now().UnixMilli(),
+	}
+	_ = s.publisher.Publish(ctx, ch, event)
 }
 
 func (s *Service) List(ctx context.Context, workspaceID string, targetDate *time.Time) ([]model.Habit, error) {
@@ -57,6 +73,10 @@ func (s *Service) Create(ctx context.Context, dto model.CreateHabitDto, userID, 
 	hid, _ := uuid.Parse(habit.ID)
 	_ = s.repo.CreateActivity(ctx, uid, wid, hid, habitsRepo.ActivityTypeHabitCreated,
 		"Создана привычка \""+habit.Title+"\"", "➕")
+	s.emitHabitEvent(ctx, workspaceID, "habit.created", map[string]interface{}{
+		"habit": habit,
+		"userId": userID,
+	})
 	return habit, nil
 }
 
@@ -94,6 +114,9 @@ func (s *Service) Update(ctx context.Context, habitID string, dto model.UpdateHa
 	}
 	_ = s.repo.CreateActivity(ctx, uid, wid, hid, habitsRepo.ActivityTypeHabitUpdated,
 		"Обновлена привычка \""+updated.Title+"\"", "✏️")
+	s.emitHabitEvent(ctx, workspaceID, "habit.updated", map[string]interface{}{
+		"habit": updated,
+	})
 	return updated, nil
 }
 
@@ -120,6 +143,10 @@ func (s *Service) Delete(ctx context.Context, habitID, userID, workspaceID strin
 	}
 	_ = s.repo.CreateActivity(ctx, habitOwnerID, wid, hid, habitsRepo.ActivityTypeHabitDeleted,
 		"Удалена привычка \""+habit.Title+"\"", "🗑️")
+	s.emitHabitEvent(ctx, workspaceID, "habit.deleted", map[string]interface{}{
+		"habitId": habitID,
+		"title":   habit.Title,
+	})
 	return nil
 }
 
@@ -138,6 +165,11 @@ func (s *Service) Complete(ctx context.Context, habitID, userID, workspaceID str
 	}
 	_ = s.repo.CreateCompletionActivity(ctx, uid, wid, hid,
 		"Завершена привычка \""+habit.Title+"\"", "✅")
+	s.emitHabitEvent(ctx, workspaceID, "habit.completed", map[string]interface{}{
+		"habitId":    habitID,
+		"completion": completion,
+		"userId":     userID,
+	})
 	return completion, nil
 }
 
@@ -156,6 +188,11 @@ func (s *Service) Toggle(ctx context.Context, habitID, userID, workspaceID strin
 	if added {
 		_ = s.repo.CreateCompletionActivity(ctx, uid, wid, hid,
 			"Завершена привычка \""+habit.Title+"\"", "✅")
+		s.emitHabitEvent(ctx, workspaceID, "habit.completed", map[string]interface{}{
+			"habitId":    habitID,
+			"completion": completion,
+			"userId":     userID,
+		})
 	}
 	return added, completion, nil
 }
