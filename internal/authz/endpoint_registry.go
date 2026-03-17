@@ -110,7 +110,8 @@ func projectsRules() []EndpointRule {
 
 func tasksRules() []EndpointRule {
 	return []EndpointRule{
-		{"/tasks/", false, []string{http.MethodPost}, "tasks:task", "update"}, // POST /tasks/:id/complete, reopen, comments
+		{"/tasks/", false, []string{http.MethodGet}, "tasks:task", "read"},      // GET /tasks/:id/comments — активности доступны всем, кто может смотреть задачу
+		{"/tasks/", false, []string{http.MethodPost}, "tasks:task", "update"},  // POST /tasks/:id/complete, reopen, comments
 		{"/tasks", false, []string{http.MethodGet}, "tasks:task", "read"},
 		{"/tasks", false, []string{http.MethodPost}, "tasks:task", "create"},
 		{"/tasks", false, []string{http.MethodPut, http.MethodPatch}, "tasks:task", "update"},

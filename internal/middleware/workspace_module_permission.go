@@ -128,23 +128,9 @@ func ModuleLicenseMiddleware(workspaceService *workspace.Service, responder *res
 			return
 		}
 
-		// Дополнительная проверка лицензии для не-core модулей:
-		// используем существующую бизнес-логику CanEnableModuleInWorkspace как универсальный gate.
-		if userExists && !found.IsCore {
-			can, err := workspaceService.CanEnableModuleInWorkspace(ctx, workspaceID, userID, userRole, moduleCode)
-			if err != nil {
-				log.Printf("ModuleLicenseMiddleware: error checking license: %v", err)
-				responder.InternalServerError(c, "Failed to check module license")
-				c.Abort()
-				return
-			}
-			if !can {
-				responder.Forbidden(c, "No license for this module")
-				c.Abort()
-				return
-			}
-		}
-
+		// Лицензия проверяется только при включении модуля (EnableModule).
+		// Если модуль уже включён в workspace — все участники с нужными правами (PermissionMiddleware)
+		// могут им пользоваться. Не требуем лицензию у каждого пользователя на каждый запрос.
 		c.Next()
 	}
 }
