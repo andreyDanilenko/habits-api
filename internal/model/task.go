@@ -74,6 +74,7 @@ type CompleteTaskDto struct {
 type TaskComment struct {
 	ID        string `json:"id" db:"id"`
 	TaskID    string `json:"taskId" db:"task_id"`
+	ParentID  string `json:"parentId,omitempty" db:"parent_id"`
 	Body      string `json:"body" db:"body"`
 	CreatedBy string `json:"createdBy" db:"created_by"`
 	CreatedAt string `json:"createdAt" db:"created_at"`
@@ -81,6 +82,12 @@ type TaskComment struct {
 
 // CreateTaskCommentDto — DTO для создания комментария.
 type CreateTaskCommentDto struct {
+	Body     string `json:"body" validate:"required,max=10000"`
+	ParentID string `json:"parentId"`
+}
+
+// UpdateTaskCommentDto — DTO для обновления комментария.
+type UpdateTaskCommentDto struct {
 	Body string `json:"body" validate:"required,max=10000"`
 }
 

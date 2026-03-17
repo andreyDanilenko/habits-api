@@ -47,6 +47,7 @@ func (h *Handler) RegisterRoutes(r *gin.RouterGroup) {
 	r.POST("/tasks/:taskId/reopen", h.Reopen)
 	r.GET("/tasks/:taskId/comments", h.ListComments)
 	r.POST("/tasks/:taskId/comments", h.CreateComment)
+	r.PATCH("/tasks/:taskId/comments/:commentId", h.UpdateComment)
 	r.DELETE("/tasks/:taskId/comments/:commentId", h.DeleteComment)
 }
 
@@ -255,13 +256,44 @@ func (h *Handler) CreateComment(c *gin.Context) {
 		h.responder.BadRequest(c, err.Error())
 		return
 	}
-	comment, err := h.taskSvc.CreateComment(c.Request.Context(), workspaceID, taskID, userID, req.Body)
+	comment, err := h.taskSvc.CreateComment(c.Request.Context(), workspaceID, taskID, userID, req.Body, req.ParentID)
 	if err != nil {
 		h.responder.InternalServerError(c, "Failed to create comment")
 		return
 	}
 	if comment == nil {
 		h.responder.NotFound(c, "Task not found")
+		return
+	}
+	h.responder.SuccessWithData(c, comment)
+}
+
+func (h *Handler) UpdateComment(c *gin.Context) {
+	workspaceID, userID, ok := h.requireWorkspaceAccess(c)
+	if !ok {
+		return
+	}
+	commentID := c.Param("commentId")
+	var req model.UpdateTaskCommentDto
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.responder.BadRequest(c, "Invalid request body")
+		return
+	}
+	if err := h.validate.Struct(req); err != nil {
+		h.responder.BadRequest(c, err.Error())
+		return
+	}
+	comment, err := h.taskSvc.UpdateComment(c.Request.Context(), workspaceID, commentID, userID, req.Body)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			h.responder.NotFound(c, "Comment not found")
+			return
+		}
+		h.responder.InternalServerError(c, "Failed to update comment")
+		return
+	}
+	if comment == nil {
+		h.responder.NotFound(c, "Comment not found")
 		return
 	}
 	h.responder.SuccessWithData(c, comment)

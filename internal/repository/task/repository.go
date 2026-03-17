@@ -468,7 +468,7 @@ func parseTimestamp(s string) (time.Time, error) {
 
 func (r *Repository) ListComments(ctx context.Context, taskID, workspaceID uuid.UUID) ([]model.TaskComment, error) {
 	query := `
-		SELECT tc.id, tc.task_id, tc.body, tc.created_by, tc.created_at
+		SELECT tc.id, tc.task_id, tc.parent_id, tc.body, tc.created_by, tc.created_at
 		FROM task_comments tc
 		JOIN tasks t ON t.id = tc.task_id AND t.workspace_id = $2 AND t.deleted_at IS NULL
 		WHERE tc.task_id = $1
@@ -483,9 +483,13 @@ func (r *Repository) ListComments(ctx context.Context, taskID, workspaceID uuid.
 	var list []model.TaskComment
 	for rows.Next() {
 		var c model.TaskComment
+		var parentID *uuid.UUID
 		var createdAt time.Time
-		if err := rows.Scan(&c.ID, &c.TaskID, &c.Body, &c.CreatedBy, &createdAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.TaskID, &parentID, &c.Body, &c.CreatedBy, &createdAt); err != nil {
 			return nil, err
+		}
+		if parentID != nil {
+			c.ParentID = parentID.String()
 		}
 		c.CreatedAt = createdAt.Format(time.RFC3339)
 		list = append(list, c)
@@ -493,24 +497,55 @@ func (r *Repository) ListComments(ctx context.Context, taskID, workspaceID uuid.
 	return list, rows.Err()
 }
 
-func (r *Repository) CreateComment(ctx context.Context, taskID, workspaceID, createdBy uuid.UUID, body string) (*model.TaskComment, error) {
+func (r *Repository) CreateComment(ctx context.Context, taskID, workspaceID, createdBy uuid.UUID, body string, parentID *uuid.UUID) (*model.TaskComment, error) {
 	var c model.TaskComment
 	query := `
-		INSERT INTO task_comments (task_id, body, created_by)
-		SELECT $1, $2, $3
+		INSERT INTO task_comments (task_id, body, created_by, parent_id)
+		SELECT $1, $2, $3, $5
 		FROM tasks t
 		WHERE t.id = $1 AND t.workspace_id = $4 AND t.deleted_at IS NULL
-		RETURNING id, task_id, body, created_by, created_at
+		RETURNING id, task_id, parent_id, body, created_by, created_at
 	`
 	var createdAt time.Time
-	err := r.db.QueryRowContext(ctx, query, taskID, body, createdBy, workspaceID).Scan(
-		&c.ID, &c.TaskID, &c.Body, &c.CreatedBy, &createdAt,
+	var retParentID *uuid.UUID
+	err := r.db.QueryRowContext(ctx, query, taskID, body, createdBy, workspaceID, parentID).Scan(
+		&c.ID, &c.TaskID, &retParentID, &c.Body, &c.CreatedBy, &createdAt,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("create comment: %w", err)
+	}
+	if retParentID != nil {
+		c.ParentID = retParentID.String()
+	}
+	c.CreatedAt = createdAt.Format(time.RFC3339)
+	return &c, nil
+}
+
+func (r *Repository) UpdateComment(ctx context.Context, commentID, workspaceID, userID uuid.UUID, body string) (*model.TaskComment, error) {
+	var c model.TaskComment
+	var parentID *uuid.UUID
+	var createdAt time.Time
+	query := `
+		UPDATE task_comments tc
+		SET body = $4
+		FROM tasks t
+		WHERE tc.id = $1 AND tc.task_id = t.id AND t.workspace_id = $2 AND t.deleted_at IS NULL AND tc.created_by = $3
+		RETURNING tc.id, tc.task_id, tc.parent_id, tc.body, tc.created_by, tc.created_at
+	`
+	err := r.db.QueryRowContext(ctx, query, commentID, workspaceID, userID, body).Scan(
+		&c.ID, &c.TaskID, &parentID, &c.Body, &c.CreatedBy, &createdAt,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, sql.ErrNoRows
+		}
+		return nil, fmt.Errorf("update comment: %w", err)
+	}
+	if parentID != nil {
+		c.ParentID = parentID.String()
 	}
 	c.CreatedAt = createdAt.Format(time.RFC3339)
 	return &c, nil

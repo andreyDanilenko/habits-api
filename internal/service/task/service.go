@@ -151,7 +151,7 @@ func (s *Service) ListComments(ctx context.Context, workspaceID, taskID string) 
 	return s.repo.ListComments(ctx, tID, wsID)
 }
 
-func (s *Service) CreateComment(ctx context.Context, workspaceID, taskID, createdBy string, body string) (*model.TaskComment, error) {
+func (s *Service) CreateComment(ctx context.Context, workspaceID, taskID, createdBy string, body string, parentID string) (*model.TaskComment, error) {
 	wsID, err := uuid.Parse(workspaceID)
 	if err != nil {
 		return nil, err
@@ -164,7 +164,30 @@ func (s *Service) CreateComment(ctx context.Context, workspaceID, taskID, create
 	if err != nil {
 		return nil, err
 	}
-	return s.repo.CreateComment(ctx, tID, wsID, userID, body)
+	var pID *uuid.UUID
+	if parentID != "" {
+		parsed, err := uuid.Parse(parentID)
+		if err == nil {
+			pID = &parsed
+		}
+	}
+	return s.repo.CreateComment(ctx, tID, wsID, userID, body, pID)
+}
+
+func (s *Service) UpdateComment(ctx context.Context, workspaceID, commentID, userID string, body string) (*model.TaskComment, error) {
+	wsID, err := uuid.Parse(workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	cID, err := uuid.Parse(commentID)
+	if err != nil {
+		return nil, err
+	}
+	uID, err := uuid.Parse(userID)
+	if err != nil {
+		return nil, err
+	}
+	return s.repo.UpdateComment(ctx, cID, wsID, uID, body)
 }
 
 func (s *Service) DeleteComment(ctx context.Context, workspaceID, commentID string) error {
