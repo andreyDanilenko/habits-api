@@ -438,7 +438,7 @@ func (s *Service) DealCreate(ctx context.Context, workspaceID string, d *model.D
 	if stageName != "" {
 		payload["stageName"] = stageName
 	}
-	s.emitDealEvent(ctx, workspaceID, "deal.created", payload)
+	s.emitDealEvent(ctx, workspaceID, realtime.EventDealCreated, payload)
 	return nil
 }
 
@@ -485,7 +485,7 @@ func (s *Service) DealUpdate(ctx context.Context, workspaceID string, d *model.D
 		payload["stageFromName"] = stageFromName
 		payload["stageToName"] = stageToName
 	}
-	s.emitDealEvent(ctx, workspaceID, "deal.updated", payload)
+	s.emitDealEvent(ctx, workspaceID, realtime.EventDealUpdated, payload)
 	return nil
 }
 
@@ -495,7 +495,7 @@ func (s *Service) DealDelete(ctx context.Context, workspaceID, id string) error 
 	if err := s.repo.DealDelete(ctx, uid, wsID); err != nil {
 		return err
 	}
-	s.emitDealEvent(ctx, workspaceID, "deal.deleted", map[string]interface{}{
+	s.emitDealEvent(ctx, workspaceID, realtime.EventDealDeleted, map[string]interface{}{
 		"dealId": id,
 	})
 	return nil

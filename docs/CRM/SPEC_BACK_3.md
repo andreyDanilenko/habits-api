@@ -3,20 +3,23 @@
 
 **Отдельный независимый модуль**
 
+*Обновлено с учётом TRELO.md, TRECKER.md — конкуренция с Trello, ClickUp, Asana*
+
 ---
 
 ## 1. Общая информация
 
-**Цель:** Реализовать отдельный модуль задач, который может работать независимо и интегрироваться с CRM через мягкие связи.
+**Цель:** Реализовать полноценный модуль задач, который может работать независимо и интегрироваться с CRM через мягкие связи. Контекстные задачи, привязанные к бизнес-объектам — «лучше, чем Trello для менеджера по продажам».
 
 **Базовый URL:** `/api/v1/workspaces/{workspaceId}/tasks`
 
 **Принципы:**
 - Модуль полностью независим (может продаваться отдельно)
 - Не имеет FOREIGN KEY на CRM или другие модули
-- Связь с CRM через `entityType` и `entityId` (мягкие ссылки)
+- Связь с CRM через `entityType` и `entityId` (мягкие ссылки, полиморфная связь)
 - Все задачи привязаны к `workspaceId` (мультитенантность)
 - RLS для изоляции данных
+- ACL: просмотр у тех, кто имеет доступ к родительской сущности или добавлен явно (наблюдатели)
 
 ---
 
@@ -50,6 +53,7 @@
 | created_at | TIMESTAMP | Да | Дата создания |
 | updated_at | TIMESTAMP | Да | Дата обновления |
 | deleted_at | TIMESTAMP | Нет | Soft delete |
+| spent_minutes | INTEGER | Нет | Затрачено времени (тайм-трекинг, суммарно) |
 
 **Индексы:**
 ```sql
@@ -120,7 +124,77 @@ CREATE INDEX idx_task_links_entity ON task_entity_links(entity_type, entity_id);
 
 ---
 
-### 2.5. Повторяющиеся задачи (структура recurring_pattern)
+### 2.5. Наблюдатели (Watchers)
+
+*TRECKER: получают уведомления о ходе задачи*
+
+**Таблица:** `task_watchers`
+
+| Поле | Тип | Обязательное | Описание |
+|------|-----|--------------|----------|
+| task_id | UUID | Да | ID задачи |
+| user_id | UUID | Да | ID наблюдателя |
+| created_at | TIMESTAMP | Да | Дата добавления |
+
+**Уникальность:** (task_id, user_id)
+
+---
+
+### 2.6. Вложения (Attachments)
+
+*TRELO: прикрепление файлов*
+
+**Таблица:** `task_attachments`
+
+| Поле | Тип | Обязательное | Описание |
+|------|-----|--------------|----------|
+| id | UUID | Да | Первичный ключ |
+| task_id | UUID | Да | ID задачи |
+| file_name | VARCHAR(255) | Да | Имя файла |
+| file_path | VARCHAR(500) | Да | Путь в хранилище |
+| file_size | INTEGER | Нет | Размер в байтах |
+| mime_type | VARCHAR(100) | Нет | MIME-тип |
+| uploaded_by | UUID | Да | Кто загрузил |
+| created_at | TIMESTAMP | Да | Дата загрузки |
+
+---
+
+### 2.7. История изменений (Audit Log)
+
+*TRECKER: «Иванов изменил описание 12.01.2024 в 15:30»*
+
+**Таблица:** `task_history`
+
+| Поле | Тип | Обязательное | Описание |
+|------|-----|--------------|----------|
+| id | UUID | Да | Первичный ключ |
+| task_id | UUID | Да | ID задачи |
+| field | VARCHAR(50) | Да | Какое поле изменено |
+| old_value | TEXT | Нет | Старое значение |
+| new_value | TEXT | Нет | Новое значение |
+| changed_by | UUID | Да | Кто изменил |
+| changed_at | TIMESTAMP | Да | Когда |
+
+---
+
+### 2.8. Тайм-трекинг (интервалы)
+
+**Таблица:** `task_time_entries`
+
+| Поле | Тип | Обязательное | Описание |
+|------|-----|--------------|----------|
+| id | UUID | Да | Первичный ключ |
+| task_id | UUID | Да | ID задачи |
+| user_id | UUID | Да | Кто вёл учёт |
+| started_at | TIMESTAMP | Да | Начало интервала |
+| stopped_at | TIMESTAMP | Нет | Конец (NULL = в процессе) |
+| minutes | INTEGER | Нет | Ручной ввод (если не интервал) |
+| note | TEXT | Нет | Комментарий |
+| created_at | TIMESTAMP | Да | Дата создания |
+
+---
+
+### 2.9. Повторяющиеся задачи (структура recurring_pattern)
 
 ```json
 {
@@ -325,7 +399,7 @@ CREATE INDEX idx_task_links_entity ON task_entity_links(entity_type, entity_id);
 
 ```json
 {
-  "comment": "Обсудили детали"
+  "comment": "Обсудили детали. @userId — упомянуть коллегу (уведомление)"
 }
 ```
 
@@ -333,7 +407,93 @@ CREATE INDEX idx_task_links_entity ON task_entity_links(entity_type, entity_id);
 
 ---
 
-### 3.6. Статистика
+### 3.6. Наблюдатели (Watchers)
+
+*TRECKER: люди, получающие уведомления о ходе задачи, но не являющиеся исполнителями*
+
+#### `GET /api/v1/workspaces/{workspaceId}/tasks/{taskId}/watchers`
+
+#### `POST /api/v1/workspaces/{workspaceId}/tasks/{taskId}/watchers`
+
+```json
+{ "userId": "uuid" }
+```
+
+#### `DELETE /api/v1/workspaces/{workspaceId}/tasks/{taskId}/watchers/{userId}`
+
+---
+
+### 3.7. Вложения (Attachments)
+
+*TRELO: прикрепление файлов к задаче*
+
+#### `GET /api/v1/workspaces/{workspaceId}/tasks/{taskId}/attachments`
+
+#### `POST /api/v1/workspaces/{workspaceId}/tasks/{taskId}/attachments`
+
+`multipart/form-data` с файлом. Проверка прав доступа к родительской сделке.
+
+#### `DELETE /api/v1/workspaces/{workspaceId}/tasks/{taskId}/attachments/{id}`
+
+---
+
+### 3.8. Тайм-трекинг
+
+*TRELO/TRECKER: кнопка «Старт/Стоп» или ручной ввод часов*
+
+#### `POST /api/v1/workspaces/{workspaceId}/tasks/{taskId}/time/start`
+
+Начать учёт времени.
+
+#### `POST /api/v1/workspaces/{workspaceId}/tasks/{taskId}/time/stop`
+
+Остановить и записать интервал. Тело: `{ "note": "опционально" }`.
+
+#### `POST /api/v1/workspaces/{workspaceId}/tasks/{taskId}/time/entry`
+
+Ручное добавление: `{ "minutes": 30, "date": "2026-03-15" }`.
+
+---
+
+### 3.9. Сохранённые фильтры
+
+*TRELO: «Сохранить выборку» (например, «Мои сделки > 100к на этапе КП»)*
+
+#### `GET /api/v1/workspaces/{workspaceId}/tasks/filters`
+
+**Ответ:** Список сохранённых фильтров пользователя.
+
+#### `POST /api/v1/workspaces/{workspaceId}/tasks/filters`
+
+```json
+{
+  "name": "Мои срочные",
+  "params": { "status": "pending", "priority": "high", "assigneeId": "me" }
+}
+```
+
+#### `DELETE /api/v1/workspaces/{workspaceId}/tasks/filters/{id}`
+
+---
+
+### 3.10. Массовые действия (Bulk Actions)
+
+*TRECKER: выбрать 20 задач и одним кликом сменить дедлайн или ответственного*
+
+#### `POST /api/v1/workspaces/{workspaceId}/tasks/bulk`
+
+**Тело запроса:**
+```json
+{
+  "taskIds": ["uuid1", "uuid2"],
+  "action": "update_status" | "update_assignee" | "update_due_date" | "delete",
+  "payload": { "status": "completed" } | { "assigneeId": "uuid" } | { "dueDate": "2026-03-20" }
+}
+```
+
+---
+
+### 3.11. Статистика
 
 #### `GET /api/v1/workspaces/{workspaceId}/tasks/stats`
 
@@ -398,7 +558,17 @@ CREATE INDEX idx_task_links_entity ON task_entity_links(entity_type, entity_id);
 
 ---
 
-## 5. Индексы для производительности
+## 5. Дополнительно (планируемо)
+
+**Webhooks** (TRECKER): события `task.created`, `task.completed`, `task.updated`, `task.deleted` для интеграций (Zapier, Make).
+
+**Гибкие статусы** (TRECKER): возможность создавать кастомные статусы задач (как колонки в Trello), а не фиксированный набор pending/in_progress/completed. Таблица `workspace_task_statuses`.
+
+**Полнотекстовый поиск**: GIN-индекс по title+description с морфологией (уже в п.6). Для поиска по комментариям — расширить или использовать pg_search.
+
+---
+
+## 6. Индексы для производительности
 
 ```sql
 -- Основные индексы
@@ -415,12 +585,16 @@ CREATE INDEX idx_task_links_composite ON task_entity_links(entity_type, entity_i
 
 ---
 
-## 6. RLS (Row Level Security)
+## 7. RLS (Row Level Security)
 
 ```sql
 ALTER TABLE tasks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE task_entity_links ENABLE ROW LEVEL SECURITY;
 ALTER TABLE task_comments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE task_watchers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE task_attachments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE task_history ENABLE ROW LEVEL SECURITY;
+ALTER TABLE task_time_entries ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY tasks_workspace_isolation ON tasks
     USING (workspace_id = current_setting('app.current_workspace_id')::UUID);
@@ -434,7 +608,7 @@ CREATE POLICY task_links_isolation ON task_entity_links
 
 ---
 
-## 7. Интеграция с CRM (мягкая)
+## 8. Интеграция с CRM (мягкая)
 
 ### При создании задачи из CRM:
 ```json
@@ -460,7 +634,7 @@ GET /api/v1/workspaces/{workspaceId}/tasks?entityType=crm_contact&entityId=conta
 
 ---
 
-## 8. Коды ответов
+## 9. Коды ответов
 
 | Код | Описание |
 |-----|----------|
@@ -476,24 +650,35 @@ GET /api/v1/workspaces/{workspaceId}/tasks?entityType=crm_contact&entityId=conta
 
 ---
 
-## 9. Критерии приемки
+## 10. Критерии приемки
 
+**Базовые (MVP):**
 - [ ] Можно создать задачу с заполнением всех полей
 - [ ] Работают все фильтры (по статусу, приоритету, типу, датам)
-- [ ] Работает поиск по названию
+- [ ] Работает полнотекстовый поиск по названию и описанию (морфология)
 - [ ] Можно отметить задачу выполненной
 - [ ] Работают повторяющиеся задачи
 - [ ] Можно привязать задачу к CRM (через entities)
-- [ ] Работают комментарии к задачам
+- [ ] Работают комментарии к задачам (в т.ч. @упоминания с уведомлением)
 - [ ] Работают теги
 - [ ] Есть статистика по задачам
 - [ ] RLS изолирует данные между workspace
 - [ ] Нет FOREIGN KEY на таблицы CRM
 - [ ] Все операции проверяют права доступа
 
+**Расширенные (TRELO/TRECKER):**
+- [ ] Наблюдатели (watchers) получают уведомления
+- [ ] Вложения (файлы) к задачам
+- [ ] Тайм-трекинг (старт/стоп, ручной ввод)
+- [ ] Сохранённые фильтры
+- [ ] Массовые действия (bulk)
+- [ ] История изменений (audit log)
+- [ ] Виджет задач в карточке сделки CRM
+- [ ] Кнопка «Быстрая задача» из любой точки CRM
+
 ---
 
-## 10. Заключение
+## 11. Заключение
 
 Модуль TASKS полностью независим:
 - Не требует CRM для работы

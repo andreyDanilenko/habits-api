@@ -64,7 +64,7 @@ func NewService(
 func (s *Service) emitInvitationAccepted(ctx context.Context, workspaceID, userID string, inv *model.Invitation) {
 	ch := realtime.WorkspaceChannel(workspaceID)
 	event := realtime.Event{
-		EventType: "invitation.accepted",
+		EventType: realtime.EventInvitationAccepted,
 		Target:    realtime.Target{Type: "workspace", ID: workspaceID},
 		Payload: map[string]interface{}{
 			"workspaceId": workspaceID,
@@ -78,7 +78,7 @@ func (s *Service) emitInvitationAccepted(ctx context.Context, workspaceID, userI
 	// Также отправить приглашённому пользователю
 	userCh := realtime.UserChannel(userID)
 	userEvent := realtime.Event{
-		EventType: "invitation.accepted",
+		EventType: realtime.EventInvitationAccepted,
 		Target:    realtime.Target{Type: "user", ID: userID},
 		Payload: map[string]interface{}{
 			"workspaceId": workspaceID,

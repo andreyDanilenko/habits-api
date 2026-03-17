@@ -5,19 +5,35 @@ import (
 	"time"
 
 	"backend/internal/model"
-	habitsRepo "backend/internal/repository/habits"
+	activityRepo "backend/internal/repository/activity"
 	journalRepo "backend/internal/repository/journal"
+	"backend/pkg/realtime"
 
 	"github.com/google/uuid"
 )
 
 type Service struct {
-	repo       *journalRepo.Repository
-	activityRepo *habitsRepo.Repository
+	repo        *journalRepo.Repository
+	activityRepo *activityRepo.Repository
+	publisher   realtime.Publisher
 }
 
-func NewService(repo *journalRepo.Repository, activityRepo *habitsRepo.Repository) *Service {
-	return &Service{repo: repo, activityRepo: activityRepo}
+func NewService(repo *journalRepo.Repository, activityRepo *activityRepo.Repository, publisher realtime.Publisher) *Service {
+	if publisher == nil {
+		publisher = realtime.NoopPublisher{}
+	}
+	return &Service{repo: repo, activityRepo: activityRepo, publisher: publisher}
+}
+
+func (s *Service) emitActivityEvent(ctx context.Context, workspaceID string) {
+	ch := realtime.WorkspaceChannel(workspaceID)
+	event := realtime.Event{
+		EventType: realtime.EventActivityCreated,
+		Target:    realtime.Target{Type: "workspace", ID: workspaceID},
+		Payload:   map[string]interface{}{},
+		Timestamp: time.Now().UnixMilli(),
+	}
+	_ = s.publisher.Publish(ctx, ch, event)
 }
 
 func (s *Service) List(ctx context.Context, workspaceID string, date *time.Time) ([]model.JournalEntry, error) {
@@ -65,8 +81,9 @@ func (s *Service) Create(ctx context.Context, workspaceID, userID string, dto mo
 	uid, _ := uuid.Parse(e.UserID)
 	wsID, _ := uuid.Parse(e.WorkspaceID)
 	entryID, _ := uuid.Parse(e.ID)
-	_ = s.activityRepo.CreateJournalActivity(ctx, uid, wsID, entryID,
-		habitsRepo.ActivityTypeJournalCreated, "Добавлена запись в дневник", "📝")
+	_ = s.activityRepo.Create(ctx, uid, wsID, activityRepo.TypeJournalCreated, activityRepo.EntityJournal, entryID,
+		"Добавлена запись в дневник", "📝")
+	s.emitActivityEvent(ctx, workspaceID)
 	return e, nil
 }
 
@@ -99,8 +116,9 @@ func (s *Service) Update(ctx context.Context, workspaceID, entryID string, dto m
 	uid, _ := uuid.Parse(existing.UserID)
 	wsID, _ := uuid.Parse(existing.WorkspaceID)
 	entryUUID, _ := uuid.Parse(existing.ID)
-	_ = s.activityRepo.CreateJournalActivity(ctx, uid, wsID, entryUUID,
-		habitsRepo.ActivityTypeJournalUpdated, "Обновлена запись в дневнике", "✏️")
+	_ = s.activityRepo.Create(ctx, uid, wsID, activityRepo.TypeJournalUpdated, activityRepo.EntityJournal, entryUUID,
+		"Обновлена запись в дневнике", "✏️")
+	s.emitActivityEvent(ctx, workspaceID)
 	return existing, nil
 }
 
@@ -119,8 +137,9 @@ func (s *Service) Delete(ctx context.Context, workspaceID, entryID string) error
 	}
 	if entry != nil {
 		uid, _ := uuid.Parse(entry.UserID)
-		_ = s.activityRepo.CreateJournalActivity(ctx, uid, wsID, id,
-			habitsRepo.ActivityTypeJournalDeleted, "Удалена запись из дневника", "🗑️")
+		_ = s.activityRepo.Create(ctx, uid, wsID, activityRepo.TypeJournalDeleted, activityRepo.EntityJournal, id,
+			"Удалена запись из дневника", "🗑️")
+		s.emitActivityEvent(ctx, workspaceID)
 	}
 	return nil
 }

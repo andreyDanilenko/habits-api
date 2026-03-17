@@ -3,17 +3,20 @@
 
 **Отдельный независимый модуль**
 
+*Обновлено с учётом TRELO.md, TRECKER.md — конкуренция с Trello, ClickUp, Asana*
+
 ---
 
 ## 1. Общая информация
 
-**Цель:** Реализовать полноценный модуль задач, который может работать как отдельный продукт и интегрироваться с CRM.
+**Цель:** Реализовать полноценный модуль задач, который может работать как отдельный продукт и интегрироваться с CRM. Контекстные задачи, привязанные к бизнес-объектам — «лучше, чем Trello для менеджера по продажам».
 
 **Где будет использоваться:**
 - Отдельная страница "Мои задачи" (главная точка входа)
 - Вкладка "Задачи" в карточках CRM (контакты, компании, сделки)
 - Виджет задач в дашборде
 - Уведомления о задачах
+- Кнопка «Быстрая задача» из любой точки CRM (список клиентов, карточка сделки)
 
 ---
 
@@ -75,6 +78,9 @@ export interface Task {
   
   // Метаданные
   commentsCount: number
+  attachmentsCount?: number
+  watchersCount?: number
+  spentMinutes?: number // тайм-трекинг
   isOverdue: boolean // вычисляемое на фронте
   isToday: boolean // вычисляемое на фронте
   
@@ -110,7 +116,7 @@ export interface Tag {
 export interface TaskComment {
   id: string
   taskId: string
-  comment: string
+  comment: string // поддерживает @userId для упоминаний
   createdBy: {
     id: string
     name: string
@@ -118,6 +124,29 @@ export interface TaskComment {
   }
   createdAt: string
   updatedAt: string
+}
+
+export interface TaskWatcher {
+  userId: string
+  userName: string
+  avatar?: string
+}
+
+export interface TaskAttachment {
+  id: string
+  fileName: string
+  fileSize: number
+  mimeType?: string
+  uploadedBy: string
+  createdAt: string
+  url: string // для скачивания
+}
+
+export interface SavedTaskFilter {
+  id: string
+  name: string
+  params: TaskFilters
+  createdAt: string
 }
 ```
 
@@ -243,6 +272,29 @@ DELETE /api/v1/workspaces/{workspaceId}/tags/{id}
 GET    /api/v1/workspaces/{workspaceId}/tasks/{taskId}/comments
 POST   /api/v1/workspaces/{workspaceId}/tasks/{taskId}/comments
 DELETE /api/v1/workspaces/{workspaceId}/tasks/{taskId}/comments/{id}
+
+// Наблюдатели
+GET    /api/v1/workspaces/{workspaceId}/tasks/{taskId}/watchers
+POST   /api/v1/workspaces/{workspaceId}/tasks/{taskId}/watchers
+DELETE /api/v1/workspaces/{workspaceId}/tasks/{taskId}/watchers/{userId}
+
+// Вложения
+GET    /api/v1/workspaces/{workspaceId}/tasks/{taskId}/attachments
+POST   /api/v1/workspaces/{workspaceId}/tasks/{taskId}/attachments
+DELETE /api/v1/workspaces/{workspaceId}/tasks/{taskId}/attachments/{id}
+
+// Тайм-трекинг
+POST   /api/v1/workspaces/{workspaceId}/tasks/{taskId}/time/start
+POST   /api/v1/workspaces/{workspaceId}/tasks/{taskId}/time/stop
+POST   /api/v1/workspaces/{workspaceId}/tasks/{taskId}/time/entry
+
+// Сохранённые фильтры
+GET    /api/v1/workspaces/{workspaceId}/tasks/filters
+POST   /api/v1/workspaces/{workspaceId}/tasks/filters
+DELETE /api/v1/workspaces/{workspaceId}/tasks/filters/{id}
+
+// Массовые действия
+POST   /api/v1/workspaces/{workspaceId}/tasks/bulk
 
 // Статистика
 GET    /api/v1/workspaces/{workspaceId}/tasks/stats
@@ -580,6 +632,112 @@ GET    /api/v1/workspaces/{workspaceId}/tasks/stats
 
 ---
 
+### 4.9. TaskWatchers.vue (наблюдатели)
+
+*TRECKER: люди, получающие уведомления о задаче*
+
+- Список аватарок наблюдателей
+- Кнопка «Добавить наблюдателя» → выбор из участников workspace
+- Удаление наблюдателя
+
+---
+
+### 4.10. TaskAttachments.vue (вложения)
+
+*TRELO: прикрепление файлов*
+
+- Список файлов с иконкой, именем, размером
+- Drag-and-drop или кнопка загрузки
+- Скачивание по клику
+- Удаление (с проверкой прав)
+
+---
+
+### 4.11. TaskTimeTracking.vue (тайм-трекинг)
+
+*TRELO/TRECKER: кнопка «Старт/Стоп»*
+
+- Кнопка «Старт» / «Стоп» (одна активная задача)
+- Отображение суммарного spent_minutes
+- Ручной ввод интервала (минуты + дата)
+- Список последних интервалов
+
+---
+
+### 4.12. BulkActionsToolbar.vue (массовые действия)
+
+*TRECKER: выбрать 20 задач и сменить дедлайн*
+
+- Чекбоксы в списке задач
+- При выборе — тулбар: «Изменить статус», «Назначить», «Изменить срок», «Удалить»
+- Подтверждение перед выполнением
+
+---
+
+### 4.13. SavedFiltersDropdown.vue (сохранённые фильтры)
+
+*TRELO: «Мои срочные», «Просроченные»*
+
+- Выпадающий список «Мои выборки»
+- Сохранение текущих фильтров под именем
+- Применение сохранённого фильтра
+- Удаление
+
+---
+
+### 4.14. Описание с Markdown
+
+*TRECKER: задачи как документы — заголовки, списки, код*
+
+- Редактор: Markdown или WYSIWYG (TipTap, Lexical)
+- Рендер при просмотре
+- Slash-команды (/) — опционально на будущее
+
+---
+
+### 4.15. Горячие клавиши (Hotkeys)
+
+*TRECKER: профессионалы ненавидят кликать*
+
+| Клавиша | Действие |
+|---------|----------|
+| `c` | Создать задачу |
+| `m` | Назначить на себя |
+| `/` | Фокус на поиск |
+| `Esc` | Закрыть модалку |
+
+---
+
+### 4.16. Optimistic UI
+
+*TRECKER: галочка срабатывает мгновенно*
+
+- При отметке «Выполнено» — сразу визуально completed, не дожидаясь ответа
+- При смене статуса в канбане — сразу перетаскивание
+- При ошибке — откат + уведомление
+
+---
+
+### 4.17. Шаблоны задач (Templates)
+
+*TRECKER: «Прием нового сотрудника», «Запуск проекта»*
+
+- Готовые наборы задач для типичных процессов
+- Кнопка «Создать из шаблона» при создании задачи
+- Таблица `task_templates` на бэкенде (отдельный этап)
+
+---
+
+### 4.18. Empty States и Onboarding
+
+*TRECKER: не показывать пустой экран*
+
+- Первый вход: демо-задача или предложение загрузить шаблон
+- «Нет задач»: призыв создать первую
+- «Фильтр ничего не нашёл»: кнопка сброса фильтров
+
+---
+
 ## 5. Интеграция с CRM
 
 ### 5.1. В карточке контакта
@@ -801,31 +959,45 @@ interface TaskActions {
 
 ## 10. Критерии готовности
 
-### Функциональные
+### Функциональные (MVP)
 - [ ] Можно создать задачу со всеми полями
 - [ ] Можно редактировать задачу
 - [ ] Можно удалить задачу
 - [ ] Можно отметить задачу выполненной
 - [ ] Работают повторяющиеся задачи
 - [ ] Работают подзадачи
-- [ ] Работают комментарии
+- [ ] Работают комментарии (в т.ч. @упоминания)
 - [ ] Работают теги
 - [ ] Работают все фильтры
 - [ ] Работает поиск
 - [ ] Работает группировка по датам
 - [ ] Работает интеграция с CRM
 
+### Функциональные (TRELO/TRECKER)
+- [ ] Наблюдатели (watchers)
+- [ ] Вложения (attachments)
+- [ ] Тайм-трекинг (старт/стоп, ручной ввод)
+- [ ] Сохранённые фильтры
+- [ ] Массовые действия (bulk)
+- [ ] Описание с Markdown
+- [ ] Горячие клавиши
+- [ ] Optimistic UI при отметке выполнения
+- [ ] Шаблоны задач (опционально)
+- [ ] Empty states и onboarding
+
 ### UI/UX
 - [ ] Все состояния (загрузка, ошибка, пусто) корректны
 - [ ] Индикаторы приоритетов видны
 - [ ] Иконки типов понятны
-- [ ] На мобильных устройствах адаптируется
+- [ ] На мобильных устройствах адаптируется (PWA/адаптив)
 - [ ] Уведомления приходят вовремя
+- [ ] Канбан и календарь (переключение видов)
 
 ### Интеграция
-- [ ] В CRM видно задачи по контакту/сделке
+- [ ] В CRM видно задачи по контакту/сделке (вкладка «Задачи»)
 - [ ] Из задачи можно перейти в CRM
 - [ ] При создании задачи из CRM подставляются связи
+- [ ] Кнопка «Быстрая задача» в списке сделок/контактов
 
 ---
 

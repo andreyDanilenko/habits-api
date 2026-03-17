@@ -1,0 +1,22 @@
+package realtime
+
+// Realtime event type constants.
+// Use these instead of string literals to ensure consistency across services.
+const (
+	// Habits
+	EventHabitCreated   = "habit.created"
+	EventHabitUpdated   = "habit.updated"
+	EventHabitDeleted   = "habit.deleted"
+	EventHabitCompleted = "habit.completed"
+
+	// Activity (habits/journal)
+	EventActivityCreated = "activity.created"
+
+	// Deals (CRM)
+	EventDealCreated = "deal.created"
+	EventDealUpdated = "deal.updated"
+	EventDealDeleted = "deal.deleted"
+
+	// Invitations
+	EventInvitationAccepted = "invitation.accepted"
+)

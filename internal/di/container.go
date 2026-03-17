@@ -18,6 +18,7 @@ import (
 	swaggerHandler "backend/internal/handler/swagger"
 	workspaceHandler "backend/internal/handler/workspace"
 	"backend/internal/middleware"
+	activityRepo "backend/internal/repository/activity"
 	crmRepo "backend/internal/repository/crm"
 	habitsRepo "backend/internal/repository/habits"
 	invitationRepo "backend/internal/repository/invitation"
@@ -47,6 +48,7 @@ import (
 	projectService "backend/internal/service/project"
 	workspaceService "backend/internal/service/workspace"
 	"backend/pkg/auth/token"
+	"backend/pkg/cache"
 	"backend/pkg/email"
 	"backend/pkg/http/cookies"
 	"backend/pkg/password"
@@ -70,6 +72,7 @@ type Container struct {
 	AdminHandler     *adminHandler.Handler
 	WorkspaceHandler *workspaceHandler.Handler
 	WorkspaceService *workspaceService.Service
+	AccessChecker    workspaceService.AccessChecker
 	MasterHandler    *masterHandler.Handler
 	CrmHandler       *crmHandler.Handler
 	NotesHandler        *notesHandler.Handler
@@ -113,6 +116,9 @@ func NewContainer(db *sql.DB, gormDB *gorm.DB, cfg *config.Config) (*Container, 
 	}
 	permSvc := permissionService.NewService(permissionRepository, enforcer, workspaceRepository)
 	workspaceSvc := workspaceService.NewService(workspaceRepository, userPrefsRepository, licenseRepository, permSvc)
+
+	accessCache := cache.NewMemoryCache()
+	accessChecker := workspaceService.CachedAccessChecker(workspaceSvc, accessCache)
 
 	// Auth
 	userRepository := userRepo.NewRepository(db)
@@ -179,14 +185,17 @@ func NewContainer(db *sql.DB, gormDB *gorm.DB, cfg *config.Config) (*Container, 
 	notesSvc := notesService.NewService(notesRepository)
 	notesHdlr := notesHandler.NewHandler(notesSvc, workspaceSvc, responder, validate)
 
+	// Activity (shared by habits and journal for RecentActivity widget)
+	activityRepository := activityRepo.NewRepository(db)
+
 	// Habits
 	habitsRepository := habitsRepo.NewRepository(db)
-	habitsSvc := habitsService.NewService(habitsRepository, workspaceRepository, rtPublisher)
+	habitsSvc := habitsService.NewService(habitsRepository, activityRepository, workspaceRepository, rtPublisher)
 	habitsHdlr := habitsHandler.NewHandler(habitsSvc, responder, validate)
 
-	// Journal
+	// Journal (no longer depends on habits)
 	journalRepository := journalRepo.NewRepository(db)
-	journalSvc := journalService.NewService(journalRepository, habitsRepository)
+	journalSvc := journalService.NewService(journalRepository, activityRepository, rtPublisher)
 	journalHdlr := journalHandler.NewHandler(journalSvc, workspaceSvc, responder, validate)
 
 	projectRepository := projectRepo.NewRepository(db)
@@ -216,6 +225,7 @@ func NewContainer(db *sql.DB, gormDB *gorm.DB, cfg *config.Config) (*Container, 
 		AdminHandler:     adminHdlr,
 		WorkspaceHandler: workspaceHdlr,
 		WorkspaceService: workspaceSvc,
+		AccessChecker:    accessChecker,
 		MasterHandler:    masterHdlr,
 		CrmHandler:       crmHdlr,
 		NotesHandler:        notesHdlr,
@@ -262,7 +272,7 @@ func (c *Container) RegisterRoutes(r *router.Router) {
 	// Protected routes
 	protected := apiV1.Group("")
 	protected.Use(middleware.GinAuthMiddleware(c.TokenGen, c.Responder))
-	protected.Use(middleware.WorkspacePathMiddleware(c.WorkspaceService, c.Responder))
+	protected.Use(middleware.WorkspacePathMiddleware(c.AccessChecker, c.Responder))
 	protected.Use(middleware.ModuleLicenseMiddleware(c.WorkspaceService, c.Responder))
 	protected.Use(middleware.PermissionMiddleware(c.Enforcer, c.PermissionService, c.Responder))
 

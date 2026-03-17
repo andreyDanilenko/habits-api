@@ -1,5 +1,7 @@
 package model
 
+import "strings"
+
 // Module — справочник модулей системы (habits, crm, ...).
 // Используется для проверки, какие модули вообще существуют и какой из них core.
 type Module struct {
@@ -35,9 +37,29 @@ type WorkspaceModule struct {
 // Коды модулей (совпадают с modules.code в БД).
 const (
 	ModuleCodeHabits   = "habits"
-	ModuleCodeCRM     = "crm"
+	ModuleCodeCRM      = "crm"
 	ModuleCodeProjects = "projects"
 )
+
+// ModulePathPatterns — маппинг path-подстрок на код модуля.
+// Добавление нового модуля: добавить константу выше и запись сюда.
+var ModulePathPatterns = map[string][]string{
+	ModuleCodeHabits:   {"/habits/", "/journal/"},
+	ModuleCodeCRM:      {"/crm/"},
+	ModuleCodeProjects: {"/projects/"},
+}
+
+// DetectModuleFromPath определяет код модуля по URL-пути.
+func DetectModuleFromPath(path string) string {
+	for code, patterns := range ModulePathPatterns {
+		for _, p := range patterns {
+			if strings.Contains(path, p) {
+				return code
+			}
+		}
+	}
+	return ""
+}
 
 // WorkspaceModuleInfo — ответ API для списка модулей workspace (для фронта).
 type WorkspaceModuleInfo struct {
