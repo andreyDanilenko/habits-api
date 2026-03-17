@@ -505,6 +505,7 @@ var (
 		{"habits:journal", "create"}, {"habits:journal", "read"}, {"habits:journal", "update"}, {"habits:journal", "delete"},
 		{"projects:project", "create"}, {"projects:project", "read"}, {"projects:project", "update"}, {"projects:project", "delete"},
 		{"projects:entity", "attach"}, {"projects:entity", "detach"},
+		{"tasks:task", "create"}, {"tasks:task", "read"}, {"tasks:task", "update"}, {"tasks:task", "delete"},
 		{"workspace:member", "invite"}, {"workspace:member", "remove"}, {"workspace:role", "manage"},
 		{"workspace:module", "read"}, {"workspace:module", "manage"},
 	}
@@ -515,6 +516,7 @@ var (
 		{"habits:habit", "create"}, {"habits:habit", "read"}, {"habits:habit", "update"}, {"habits:habit", "delete"}, {"habits:habit", "complete"},
 		{"habits:journal", "create"}, {"habits:journal", "read"}, {"habits:journal", "update"},
 		{"projects:project", "create"}, {"projects:project", "read"}, {"projects:project", "update"},
+		{"tasks:task", "create"}, {"tasks:task", "read"}, {"tasks:task", "update"}, {"tasks:task", "delete"},
 		{"workspace:member", "invite"},
 		{"workspace:module", "read"}, {"workspace:module", "manage"},
 	}
@@ -522,6 +524,7 @@ var (
 		{"crm:deal", "read"}, {"crm:contact", "read"}, {"crm:company", "read"},
 		{"habits:habit", "read"}, {"habits:journal", "read"},
 		{"projects:project", "read"},
+		{"tasks:task", "read"},
 		{"workspace:module", "read"}, // просмотр списка модулей (GET /modules)
 	}
 )

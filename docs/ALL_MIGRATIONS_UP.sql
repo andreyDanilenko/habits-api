@@ -1,6 +1,9 @@
 -- =============================================================================
 -- Сводный файл всех миграций (только UP, без DROP)
--- Порядок: 000001 .. 000022, 000023, 000025, 000026
+-- Порядок: 000001 .. 000022, 000023, 000025, 000026, 000027 .. 000030
+--
+-- При изменениях: актуализировать migrations/clean_baseline/ (продакшен)
+-- См. backend/migrations/README.md
 -- =============================================================================
 
 -- ========== 000001_create_request_logs ==========
@@ -929,3 +932,112 @@ COMMENT ON COLUMN invitations.status IS 'PENDING, ACCEPTED, EXPIRED, CANCELLED';
 
 -- ========== 000026_registration_tokens_invite_token ==========
 ALTER TABLE registration_tokens ADD COLUMN IF NOT EXISTS invite_token VARCHAR(255);
+
+-- ========== 000027_notifications ==========
+-- Универсальная таблица уведомлений: activity, chat, system и т.д.
+CREATE TABLE IF NOT EXISTS notifications (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  workspace_id UUID REFERENCES workspaces(id) ON DELETE CASCADE,
+  channel VARCHAR(32) NOT NULL DEFAULT 'activity',
+  event_type VARCHAR(64) NOT NULL,
+  event_key VARCHAR(255) NOT NULL,
+  title TEXT NOT NULL,
+  subtitle TEXT,
+  payload JSONB,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  read_at TIMESTAMP
+);
+
+CREATE INDEX idx_notifications_user_created ON notifications(user_id, created_at DESC);
+CREATE INDEX idx_notifications_user_unread ON notifications(user_id) WHERE read_at IS NULL;
+CREATE UNIQUE INDEX idx_notifications_user_event_key ON notifications(user_id, event_key);
+
+-- ========== 000028_tasks ==========
+CREATE TABLE IF NOT EXISTS tasks (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    title VARCHAR(500) NOT NULL,
+    description TEXT,
+    type VARCHAR(50) NOT NULL DEFAULT 'other' CHECK (type IN ('call', 'meeting', 'email', 'lunch', 'other')),
+    priority VARCHAR(20) NOT NULL DEFAULT 'medium' CHECK (priority IN ('low', 'medium', 'high', 'critical')),
+    status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'in_progress', 'completed', 'cancelled')),
+    due_date TIMESTAMP NOT NULL,
+    due_time VARCHAR(10),
+    reminder_date TIMESTAMP,
+    duration INTEGER,
+    completed_at TIMESTAMP,
+    completed_by UUID REFERENCES users(id),
+    completion_note TEXT,
+    is_recurring BOOLEAN NOT NULL DEFAULT FALSE,
+    recurring_pattern JSONB,
+    parent_id UUID REFERENCES tasks(id) ON DELETE SET NULL,
+    assignee_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    deleted_at TIMESTAMP,
+    spent_minutes INTEGER DEFAULT 0
+);
+
+CREATE INDEX idx_tasks_workspace ON tasks(workspace_id, deleted_at);
+CREATE INDEX idx_tasks_assignee ON tasks(assignee_id) WHERE deleted_at IS NULL;
+CREATE INDEX idx_tasks_status ON tasks(status) WHERE deleted_at IS NULL;
+CREATE INDEX idx_tasks_due_date ON tasks(due_date) WHERE deleted_at IS NULL;
+CREATE INDEX idx_tasks_reminder ON tasks(reminder_date) WHERE reminder_date IS NOT NULL AND deleted_at IS NULL;
+CREATE INDEX idx_tasks_created_by ON tasks(created_by) WHERE deleted_at IS NULL;
+
+COMMENT ON TABLE tasks IS 'Задачи workspace. Полиморфная связь с CRM через task_entity_links.';
+
+CREATE TABLE IF NOT EXISTS task_entity_links (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    entity_type VARCHAR(50) NOT NULL,
+    entity_id UUID NOT NULL,
+    entity_name VARCHAR(255),
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_task_links_task ON task_entity_links(task_id);
+CREATE INDEX idx_task_links_entity ON task_entity_links(entity_type, entity_id);
+
+COMMENT ON TABLE task_entity_links IS 'Связь задачи с сущностями (crm_deal, crm_contact, crm_company).';
+
+INSERT INTO modules (id, code, name, description, is_core)
+SELECT gen_random_uuid(), 'tasks', 'Задачи', 'Управление задачами и напоминаниями', FALSE
+WHERE NOT EXISTS (SELECT 1 FROM modules WHERE code = 'tasks');
+
+INSERT INTO workspace_modules (workspace_id, module_id, status, activated_at)
+SELECT w.id, m.id, 'active', COALESCE(w.created_at, NOW())
+FROM workspaces w
+JOIN modules m ON m.code = 'tasks'
+ON CONFLICT (workspace_id, module_id) DO NOTHING;
+
+INSERT INTO permission_catalog (module_code, entity_type, action, name, is_system)
+VALUES
+    ('tasks', 'task', 'create', 'Создание задачи', true),
+    ('tasks', 'task', 'read', 'Просмотр задачи', true),
+    ('tasks', 'task', 'update', 'Редактирование задачи', true),
+    ('tasks', 'task', 'delete', 'Удаление задачи', true)
+ON CONFLICT (module_code, entity_type, action) DO NOTHING;
+
+-- ========== 000029_task_comments ==========
+CREATE TABLE IF NOT EXISTS task_comments (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    body TEXT NOT NULL,
+    created_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_task_comments_task ON task_comments(task_id);
+CREATE INDEX idx_task_comments_created_at ON task_comments(task_id, created_at DESC);
+
+COMMENT ON TABLE task_comments IS 'Комментарии к задачам. Часть единого потока активности (Activity).';
+
+-- ========== 000030_task_types_expand ==========
+-- Расширение типов задач (для БД, где tasks уже создана со старым CHECK)
+ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_type_check;
+ALTER TABLE tasks ADD CONSTRAINT tasks_type_check CHECK (
+  type IN ('task', 'bug', 'feature', 'meeting', 'call', 'email', 'lunch', 'other')
+);

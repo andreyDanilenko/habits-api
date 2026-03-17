@@ -52,6 +52,7 @@ func init() {
 	RegisterEndpointRules(crmRules())
 	RegisterEndpointRules(habitsRules())
 	RegisterEndpointRules(projectsRules())
+	RegisterEndpointRules(tasksRules())
 }
 
 func workspaceRules() []EndpointRule {
@@ -104,5 +105,15 @@ func projectsRules() []EndpointRule {
 		{"/projects", false, []string{http.MethodPost}, "projects:project", "create"},
 		{"/projects", false, []string{http.MethodPut, http.MethodPatch}, "projects:project", "update"},
 		{"/projects", false, []string{http.MethodDelete}, "projects:project", "delete"},
+	}
+}
+
+func tasksRules() []EndpointRule {
+	return []EndpointRule{
+		{"/tasks/", false, []string{http.MethodPost}, "tasks:task", "update"}, // POST /tasks/:id/complete, reopen, comments
+		{"/tasks", false, []string{http.MethodGet}, "tasks:task", "read"},
+		{"/tasks", false, []string{http.MethodPost}, "tasks:task", "create"},
+		{"/tasks", false, []string{http.MethodPut, http.MethodPatch}, "tasks:task", "update"},
+		{"/tasks", false, []string{http.MethodDelete}, "tasks:task", "delete"},
 	}
 }
