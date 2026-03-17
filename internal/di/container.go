@@ -12,6 +12,7 @@ import (
 	loggerHandler "backend/internal/handler/logger"
 	masterHandler "backend/internal/handler/master"
 	notesHandler "backend/internal/handler/notes"
+	taskHandler "backend/internal/handler/task"
 	notificationHandler "backend/internal/handler/notification"
 	permissionHandler "backend/internal/handler/permission"
 	projectHandler "backend/internal/handler/project"
@@ -27,6 +28,7 @@ import (
 	loggerRepo "backend/internal/repository/logger"
 	masterRepo "backend/internal/repository/master"
 	notesRepo "backend/internal/repository/notes"
+	taskRepo "backend/internal/repository/task"
 	notificationRepo "backend/internal/repository/notification"
 	permissionRepo "backend/internal/repository/permission"
 	projectRepo "backend/internal/repository/project"
@@ -43,6 +45,7 @@ import (
 	loggerService "backend/internal/service/logger"
 	masterService "backend/internal/service/master"
 	notesService "backend/internal/service/notes"
+	taskService "backend/internal/service/task"
 	notificationService "backend/internal/service/notification"
 	permissionService "backend/internal/service/permission"
 	projectService "backend/internal/service/project"
@@ -76,6 +79,7 @@ type Container struct {
 	MasterHandler    *masterHandler.Handler
 	CrmHandler       *crmHandler.Handler
 	NotesHandler        *notesHandler.Handler
+	TaskHandler         *taskHandler.Handler
 	NotificationHandler *notificationHandler.Handler
 	ProjectHandler      *projectHandler.Handler
 	HabitsHandler    *habitsHandler.Handler
@@ -185,6 +189,11 @@ func NewContainer(db *sql.DB, gormDB *gorm.DB, cfg *config.Config) (*Container, 
 	notesSvc := notesService.NewService(notesRepository)
 	notesHdlr := notesHandler.NewHandler(notesSvc, workspaceSvc, responder, validate)
 
+	// Tasks module
+	taskRepository := taskRepo.NewRepository(db)
+	taskSvc := taskService.NewService(taskRepository)
+	taskHdlr := taskHandler.NewHandler(taskSvc, workspaceSvc, responder, validate)
+
 	// Activity (shared by habits and journal for RecentActivity widget)
 	activityRepository := activityRepo.NewRepository(db)
 
@@ -229,6 +238,7 @@ func NewContainer(db *sql.DB, gormDB *gorm.DB, cfg *config.Config) (*Container, 
 		MasterHandler:    masterHdlr,
 		CrmHandler:       crmHdlr,
 		NotesHandler:        notesHdlr,
+		TaskHandler:         taskHdlr,
 		NotificationHandler: notificationHdlr,
 		ProjectHandler:      projectHdlr,
 		HabitsHandler:    habitsHdlr,
@@ -293,6 +303,7 @@ func (c *Container) RegisterRoutes(r *router.Router) {
 	c.ProjectHandler.RegisterRoutes(wsIDGroup)
 	c.CrmHandler.RegisterRoutes(wsIDGroup)
 	c.NotesHandler.RegisterRoutes(wsIDGroup)
+	c.TaskHandler.RegisterRoutes(wsIDGroup)
 	c.HabitsHandler.RegisterRoutes(wsIDGroup)
 	c.JournalHandler.RegisterRoutes(wsIDGroup)
 	c.PermissionHandler.RegisterRoutes(wsIDGroup)

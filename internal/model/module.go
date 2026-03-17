@@ -39,6 +39,7 @@ const (
 	ModuleCodeHabits   = "habits"
 	ModuleCodeCRM      = "crm"
 	ModuleCodeProjects = "projects"
+	ModuleCodeTasks    = "tasks"
 )
 
 // ModulePathPatterns — маппинг path-подстрок на код модуля.
@@ -47,6 +48,7 @@ var ModulePathPatterns = map[string][]string{
 	ModuleCodeHabits:   {"/habits/", "/journal/"},
 	ModuleCodeCRM:      {"/crm/"},
 	ModuleCodeProjects: {"/projects/"},
+	ModuleCodeTasks:    {"/tasks/"},
 }
 
 // DetectModuleFromPath определяет код модуля по URL-пути.
