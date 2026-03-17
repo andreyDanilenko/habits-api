@@ -91,7 +91,7 @@ func ModuleLicenseMiddleware(workspaceService *workspace.Service, responder *res
 		}
 		workspaceID, _ := wsVal.(string)
 
-		userID, userRole, userExists := GetAuthFromGin(c)
+		userID, userRole, _ := GetAuthFromGin(c)
 
 		path := c.FullPath()
 		if path == "" {
