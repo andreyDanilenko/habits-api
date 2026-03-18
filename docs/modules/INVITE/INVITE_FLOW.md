@@ -191,5 +191,5 @@ type EmailService interface {
 ## 5. Связь с другими документами
 
 - [TASK_V1.md](./TASK_V1.md) — полная спецификация API, модель данных, декомпозиция задач
-- [ROLES_BACKEND_ARCHITECTURE.md](../SYSTEM/ROLES_BACKEND_ARCHITECTURE.md) — как роли назначаются при принятии приглашения
-- [ROLES_SECURITY_CONSIDERATIONS.md](../SYSTEM/ROLES_SECURITY_CONSIDERATIONS.md) — безопасность ролей
+- [ROLES_BACKEND_ARCHITECTURE.md](../../SYSTEM/ROLES_BACKEND_ARCHITECTURE.md) — как роли назначаются при принятии приглашения
+- [ROLES_SECURITY_CONSIDERATIONS.md](../../SYSTEM/ROLES_SECURITY_CONSIDERATIONS.md) — безопасность ролей

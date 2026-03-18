@@ -214,4 +214,4 @@ LIMIT 10;
 
 ---
 
-**Подробная документация:** [ENTITIES_ANALYSIS.md](./ENTITIES_ANALYSIS.md)
+**Подробная документация:** [ENTITIES_ANALYSIS.md](../plans/ENTITIES_ANALYSIS.md)

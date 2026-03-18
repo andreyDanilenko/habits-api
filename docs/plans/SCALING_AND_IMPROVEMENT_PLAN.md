@@ -322,7 +322,7 @@
 **Backend:**
 
 1. Запись в справочник: миграция с `INSERT INTO modules (code, name, description, is_core) VALUES ('tasks', 'Задачи', '...', false)`.
-2. Миграции таблиц модуля — только свои сущности, у каждой таблицы `workspace_id UUID NOT NULL`, без FK на `users`/`workspaces`. При необходимости `owner_id`, `assignee_id` как UUID. См. [SQL_AND_MIGRATIONS_GUIDE.md](SQL_AND_MIGRATIONS_GUIDE.md).
+2. Миграции таблиц модуля — только свои сущности, у каждой таблицы `workspace_id UUID NOT NULL`, без FK на `users`/`workspaces`. При необходимости `owner_id`, `assignee_id` как UUID. См. [SQL_AND_MIGRATIONS_GUIDE.md](../guides/SQL_AND_MIGRATIONS_GUIDE.md).
 3. Модели, репозиторий, сервис, хендлер в пакете по домену (например `internal/handler/tasks`, `internal/repository/tasks`). Проверка доступа к workspace через общий middleware (HasAccess по Core).
 4. Регистрация роутов под ` /api/v1/workspaces/:workspaceId/tasks/...`.
 5. По желанию: включение модуля по умолчанию для новых workspace (триггер или сид в `workspace_modules`) или только по запросу.
@@ -357,4 +357,4 @@
 - **Жёсткая развязка:** чтобы в модулях не хранились ID сущностей Core, привязку к проектам делать через таблицу связей в Core (вариант B), а не через колонку project_id в crm_deals (вариант A).
 - **Для масштабирования:** добавить projects и выбранный механизм привязки (A или B); не плодить FK из модулей в Core; при разделении БД убирать FK у Habits и оставлять только UUID; ввести BFF/оркестратор; связи между модулями — только через таблицы связей без FK.
 - **Для standalone-модулей:** позже ввести единый контекст (tenant_type/tenant_id или nullable workspace_id) и проекты, привязанные к этому контексту.
-- **Документация:** гайд по таблицам и миграциям — [SQL_AND_MIGRATIONS_GUIDE.md](SQL_AND_MIGRATIONS_GUIDE.md); сводное состояние проекта после правок — [PROJECT_STATE_REPORT.md](PROJECT_STATE_REPORT.md).
+- **Документация:** гайд по таблицам и миграциям — [SQL_AND_MIGRATIONS_GUIDE.md](../guides/SQL_AND_MIGRATIONS_GUIDE.md); сводное состояние проекта после правок — [PROJECT_STATE_REPORT.md](./PROJECT_STATE_REPORT.md).

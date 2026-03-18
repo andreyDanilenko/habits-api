@@ -247,8 +247,8 @@ migrate create -ext sql -dir ./migrations -seq create_table
 
 ## 📚 Полезные ссылки
 
-- **Полный гайд:** [ERP_LEARNING_GUIDE.md](./ERP_LEARNING_GUIDE.md)
-- **Анализ сущностей:** [ENTITIES_ANALYSIS.md](./ENTITIES_ANALYSIS.md)
+- **Полный гайд:** [ERP_LEARNING_GUIDE.md](../guides/ERP_LEARNING_GUIDE.md)
+- **Анализ сущностей:** [ENTITIES_ANALYSIS.md](../plans/ENTITIES_ANALYSIS.md)
 - **Быстрая справка Habits:** [HABITS_QUICK_REFERENCE.md](./HABITS_QUICK_REFERENCE.md)
 
 ---

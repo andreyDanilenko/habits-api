@@ -47,7 +47,7 @@
 - **Временные метки:** `created_at`, `updated_at` — тип `TIMESTAMP` или `TIMESTAMPTZ`, по умолчанию `NOW()` где нужно. В CRM используется `TIMESTAMPTZ`.
 - **Мягкое удаление:** колонка `deleted_at TIMESTAMP` (или TIMESTAMPTZ). NULL = запись активна; не NULL = удалена. В выборках фильтр `WHERE deleted_at IS NULL`.
 - **Изоляция по workspace:** у таблиц, принадлежащих модулям и общим сущностям, колонка `workspace_id UUID NOT NULL`. Индекс по `workspace_id` (часто составной с `deleted_at` или другими полями для типичных запросов).
-- **Владелец/автор:** `owner_id`, `created_by`, `updated_by` — UUID, без FK на `users` в таблицах модулей (см. [SCALING_AND_IMPROVEMENT_PLAN.md](SCALING_AND_IMPROVEMENT_PLAN.md)). В Core (например `workspaces`) допустим FK на `users`.
+- **Владелец/автор:** `owner_id`, `created_by`, `updated_by` — UUID, без FK на `users` в таблицах модулей (см. [SCALING_AND_IMPROVEMENT_PLAN.md](../plans/SCALING_AND_IMPROVEMENT_PLAN.md)). В Core (например `workspaces`) допустим FK на `users`.
 
 ---
 
@@ -107,6 +107,6 @@
 
 ## 10. Ссылки
 
-- [DATABASE.md](DATABASE.md) — подключение к PostgreSQL, просмотр миграций, сброс schema_migrations.
-- [MODULES.md](MODULES.md) — как модуль регистрируется в системе (backend + frontend), включение в workspace.
-- [SCALING_AND_IMPROVEMENT_PLAN.md](SCALING_AND_IMPROVEMENT_PLAN.md) — принцип 1 сервис / 1 БД, какие таблицы к какому модулю относятся, план выноса и добавления модулей.
+- [DATABASE.md](./DATABASE.md) — подключение к PostgreSQL, просмотр миграций, сброс schema_migrations.
+- [MODULES.md](../modules/MODULES.md) — как модуль регистрируется в системе (backend + frontend), включение в workspace.
+- [SCALING_AND_IMPROVEMENT_PLAN.md](../plans/SCALING_AND_IMPROVEMENT_PLAN.md) — принцип 1 сервис / 1 БД, какие таблицы к какому модулю относятся, план выноса и добавления модулей.

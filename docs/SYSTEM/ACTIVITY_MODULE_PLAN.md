@@ -147,4 +147,4 @@ Middleware подходит для сквозных задач (логирова
 ## 5. Связь с другими документами
 
 - [ROLES_BACKEND_ARCHITECTURE.md](./ROLES_BACKEND_ARCHITECTURE.md) — права на `crm:activity:*`
-- [SCALING_AND_IMPROVEMENT_PLAN.md](../SCALING_AND_IMPROVEMENT_PLAN.md) — общий план масштабирования
+- [SCALING_AND_IMPROVEMENT_PLAN.md](../plans/SCALING_AND_IMPROVEMENT_PLAN.md) — общий план масштабирования
