@@ -28,6 +28,7 @@
 - [SQL_AND_MIGRATIONS_GUIDE](guides/SQL_AND_MIGRATIONS_GUIDE.md) — миграции и соглашения
 - [ERP_LEARNING_GUIDE](guides/ERP_LEARNING_GUIDE.md) — обучение разработке модулей
 - [LOGGING](guides/LOGGING.md) — система логирования
+- **[Developer Guide](guides/developer-guide/README.md)** — полный гайд: структура, БД, модули, план развития, интеграции
 
 ### Модули и лицензии
 - [MODULES](modules/MODULES.md) — модули, лицензии, включение/отключение
