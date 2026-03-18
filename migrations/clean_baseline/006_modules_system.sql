@@ -9,6 +9,7 @@ CREATE TABLE modules (
     name VARCHAR(255) NOT NULL,
     description TEXT,
     is_core BOOLEAN NOT NULL DEFAULT FALSE,
+    default_trial_days INTEGER DEFAULT 30,
     created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
@@ -34,20 +35,21 @@ CREATE INDEX idx_workspace_modules_status ON workspace_modules(status);
 COMMENT ON TABLE modules IS 'Справочник модулей ERP';
 COMMENT ON TABLE workspace_modules IS 'Активные модули в workspace';
 COMMENT ON COLUMN modules.is_core IS 'По умолчанию включается в новом workspace';
+COMMENT ON COLUMN modules.default_trial_days IS 'Триал для новых workspace. NULL/0 = платный. 30 = 30 дней триала.';
 
--- Seed: core и опциональные модули
-INSERT INTO modules (id, code, name, description, is_core) VALUES
-    (gen_random_uuid(), 'habits', 'Привычки', 'Трекер привычек и календарь', TRUE),
-    (gen_random_uuid(), 'crm', 'CRM', 'Контакты и сделки', TRUE),
-    (gen_random_uuid(), 'projects', 'Проекты', 'Группировка сущностей в проекты', TRUE),
-    (gen_random_uuid(), 'notes', 'Заметки', 'Простые заметки по воркспейсу', FALSE),
-    (gen_random_uuid(), 'inventory', 'Склад', 'Учёт остатков (в разработке)', FALSE),
-    (gen_random_uuid(), 'finance', 'Финансы', 'Проводки и отчёты (в разработке)', FALSE),
-    (gen_random_uuid(), 'hr', 'HR', 'Сотрудники и роли (в разработке)', FALSE),
-    (gen_random_uuid(), 'tasks', 'Задачи', 'Управление задачами и напоминаниями', FALSE);
+-- Seed: core (habits, crm, projects, tasks) и опциональные с триалом
+INSERT INTO modules (id, code, name, description, is_core, default_trial_days) VALUES
+    (gen_random_uuid(), 'habits', 'Привычки', 'Трекер привычек и календарь', TRUE, NULL),
+    (gen_random_uuid(), 'crm', 'CRM', 'Контакты и сделки', TRUE, NULL),
+    (gen_random_uuid(), 'projects', 'Проекты', 'Группировка сущностей в проекты', TRUE, NULL),
+    (gen_random_uuid(), 'tasks', 'Задачи', 'Управление задачами и напоминаниями', TRUE, NULL),
+    (gen_random_uuid(), 'notes', 'Заметки', 'Простые заметки по воркспейсу', FALSE, 30),
+    (gen_random_uuid(), 'inventory', 'Склад', 'Учёт остатков (в разработке)', FALSE, 30),
+    (gen_random_uuid(), 'finance', 'Финансы', 'Проводки и отчёты (в разработке)', FALSE, 30),
+    (gen_random_uuid(), 'hr', 'HR', 'Сотрудники и роли (в разработке)', FALSE, 30);
 
--- Триггер: core-модули при создании workspace
-CREATE OR REPLACE FUNCTION fn_workspace_enable_core_modules()
+-- Триггер: core = active, non-core с default_trial_days = trial
+CREATE OR REPLACE FUNCTION fn_workspace_enable_modules()
 RETURNS TRIGGER AS $$
 BEGIN
     INSERT INTO workspace_modules (workspace_id, module_id, status, activated_at)
@@ -55,14 +57,21 @@ BEGIN
     FROM modules m
     WHERE m.is_core = TRUE
     ON CONFLICT (workspace_id, module_id) DO NOTHING;
+
+    INSERT INTO workspace_modules (workspace_id, module_id, status, activated_at, expires_at)
+    SELECT NEW.id, m.id, 'trial', NOW(), NOW() + (m.default_trial_days || ' days')::INTERVAL
+    FROM modules m
+    WHERE m.is_core = FALSE AND m.default_trial_days > 0
+    ON CONFLICT (workspace_id, module_id) DO NOTHING;
+
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER tr_workspace_enable_core_modules
+CREATE TRIGGER tr_workspace_enable_modules
     AFTER INSERT ON workspaces
     FOR EACH ROW
-    EXECUTE PROCEDURE fn_workspace_enable_core_modules();
+    EXECUTE PROCEDURE fn_workspace_enable_modules();
 
 -- Лицензии пользователей на модули
 CREATE TABLE user_module_licenses (

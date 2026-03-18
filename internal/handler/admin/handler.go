@@ -17,7 +17,8 @@ const RouteUsers = "/users"
 const RouteUserByID = "/users/:id"
 const RouteUserBan = "/users/:id/ban"
 const RouteUserUnban = "/users/:id/unban"
-const RouteUserLicenses = "/users/:id/licenses"
+const RouteUserLicenses    = "/users/:id/licenses"
+const RouteUserLicenseByID = "/users/:id/licenses/:licenseId"
 
 type Handler struct {
 	workspaceService *workspaceService.Service
@@ -37,13 +38,24 @@ func NewHandler(
 	}
 }
 
+const RouteAdminModules       = "/modules"
+const RouteWorkspaceByID      = "/workspaces/:workspaceId"
+const RouteWorkspaceModules   = "/workspaces/:workspaceId/modules"
+const RouteWorkspaceModuleOne = "/workspaces/:workspaceId/modules/:moduleCode"
+
 func (h *Handler) RegisterRoutes(r *gin.RouterGroup) {
 	r.GET(RouteWorkspaces, h.ListWorkspaces)
+	r.GET(RouteWorkspaceByID, h.GetWorkspace)
+	r.GET(RouteWorkspaceModules, h.GetWorkspaceModules)
+	r.PATCH(RouteWorkspaceModuleOne, h.PatchWorkspaceModule)
 	r.GET(RouteUsers, h.ListUsers)
+	r.GET(RouteAdminModules, h.ListModules)
 	r.DELETE(RouteUserByID, h.DeleteUser)
 	r.POST(RouteUserBan, h.BanUser)
 	r.POST(RouteUserUnban, h.UnbanUser)
+	r.GET(RouteUserLicenses, h.GetUserLicenses)
 	r.POST(RouteUserLicenses, h.GrantLicense)
+	r.DELETE(RouteUserLicenseByID, h.RevokeLicense)
 }
 
 // ListWorkspaces возвращает все workspaces. Вызывать только после RequireAdmin middleware.
@@ -54,6 +66,91 @@ func (h *Handler) ListWorkspaces(c *gin.Context) {
 		return
 	}
 	h.responder.SuccessWithData(c, gin.H{"workspaces": list})
+}
+
+// GetWorkspace возвращает workspace по ID (админ).
+func (h *Handler) GetWorkspace(c *gin.Context) {
+	workspaceID := c.Param("workspaceId")
+	if workspaceID == "" {
+		h.responder.BadRequest(c, "Workspace ID required")
+		return
+	}
+	ws, err := h.workspaceService.GetForAdmin(c.Request.Context(), workspaceID)
+	if err != nil {
+		if err == workspaceService.ErrWorkspaceNotFound {
+			h.responder.NotFound(c, "Workspace not found")
+			return
+		}
+		h.responder.InternalServerError(c, "Failed to get workspace")
+		return
+	}
+	h.responder.SuccessWithData(c, gin.H{"workspace": ws})
+}
+
+// GetWorkspaceModules возвращает модули workspace (админ — trial/full).
+func (h *Handler) GetWorkspaceModules(c *gin.Context) {
+	workspaceID := c.Param("workspaceId")
+	if workspaceID == "" {
+		h.responder.BadRequest(c, "Workspace ID required")
+		return
+	}
+	list, err := h.workspaceService.GetWorkspaceModulesForAdmin(c.Request.Context(), workspaceID)
+	if err != nil {
+		h.responder.InternalServerError(c, "Failed to get workspace modules")
+		return
+	}
+	h.responder.SuccessWithData(c, gin.H{"modules": list})
+}
+
+type patchWorkspaceModuleRequest struct {
+	Action    string `json:"action" binding:"required"` // extend_trial | add_trial | set_full | set_disabled
+	TrialDays *int   `json:"trialDays,omitempty"`
+}
+
+// PatchWorkspaceModule — продлить триал, добавить триал или перевести в full (админ).
+func (h *Handler) PatchWorkspaceModule(c *gin.Context) {
+	workspaceID := c.Param("workspaceId")
+	moduleCode := c.Param("moduleCode")
+	if workspaceID == "" || moduleCode == "" {
+		h.responder.BadRequest(c, "Workspace ID and module code required")
+		return
+	}
+	var req patchWorkspaceModuleRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.responder.BadRequest(c, "action required")
+		return
+	}
+	days := 30
+	if req.TrialDays != nil && *req.TrialDays > 0 {
+		days = *req.TrialDays
+	}
+	var err error
+	switch req.Action {
+	case "extend_trial":
+		err = h.workspaceService.AdminExtendWorkspaceModuleTrial(c.Request.Context(), workspaceID, moduleCode, days)
+	case "add_trial":
+		err = h.workspaceService.AdminSetWorkspaceModuleTrial(c.Request.Context(), workspaceID, moduleCode, days)
+	case "set_full":
+		err = h.workspaceService.AdminSetWorkspaceModuleFull(c.Request.Context(), workspaceID, moduleCode)
+	case "set_disabled":
+		err = h.workspaceService.AdminSetWorkspaceModuleDisabled(c.Request.Context(), workspaceID, moduleCode)
+	default:
+		h.responder.BadRequest(c, "action must be extend_trial, add_trial, set_full or set_disabled")
+		return
+	}
+	if err != nil {
+		if err == workspaceService.ErrModuleNotFound {
+			h.responder.BadRequest(c, "Module not found")
+			return
+		}
+		if err == sql.ErrNoRows {
+			h.responder.NotFound(c, "Workspace module not found")
+			return
+		}
+		h.responder.InternalServerError(c, "Failed to update workspace module")
+		return
+	}
+	h.responder.SuccessWithMessage(c, "Workspace module updated")
 }
 
 // ListUsers возвращает всех пользователей (в т.ч. DELETED) с их workspaces. Только для ADMIN.
@@ -105,6 +202,54 @@ func (h *Handler) ListUsers(c *gin.Context) {
 		})
 	}
 	h.responder.SuccessWithData(c, gin.H{"users": result})
+}
+
+// ListModules возвращает все модули из справочника (для админки — выдача лицензий).
+func (h *Handler) ListModules(c *gin.Context) {
+	list, err := h.workspaceService.ListAllModules(c.Request.Context())
+	if err != nil {
+		h.responder.InternalServerError(c, "Failed to list modules")
+		return
+	}
+	h.responder.SuccessWithData(c, gin.H{"modules": list})
+}
+
+// GetUserLicenses возвращает лицензии пользователя (для админки — просмотр и выдача).
+func (h *Handler) GetUserLicenses(c *gin.Context) {
+	userID := c.Param("id")
+	if userID == "" {
+		h.responder.BadRequest(c, "User ID required")
+		return
+	}
+	list, err := h.workspaceService.ListMyLicenses(c.Request.Context(), userID)
+	if err != nil {
+		h.responder.InternalServerError(c, "Failed to get user licenses")
+		return
+	}
+	if list == nil {
+		list = []model.UserModuleLicense{}
+	}
+	h.responder.SuccessWithData(c, gin.H{"licenses": list})
+}
+
+// RevokeLicense отзывает лицензию у пользователя (только админ).
+func (h *Handler) RevokeLicense(c *gin.Context) {
+	userID := c.Param("id")
+	licenseID := c.Param("licenseId")
+	if userID == "" || licenseID == "" {
+		h.responder.BadRequest(c, "User ID and License ID required")
+		return
+	}
+	err := h.workspaceService.RevokeLicense(c.Request.Context(), licenseID, userID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			h.responder.NotFound(c, "License not found")
+			return
+		}
+		h.responder.InternalServerError(c, "Failed to revoke license")
+		return
+	}
+	h.responder.SuccessWithMessage(c, "License revoked successfully")
 }
 
 // DeleteUser удаляет пользователя. Только для ADMIN.

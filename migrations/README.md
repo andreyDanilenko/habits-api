@@ -49,4 +49,5 @@ go run ./cmd/migrate/main.go up
 | 000026 | 023 (invite_token) |
 | 000027 | 025_notifications |
 | 000028 + 000030 | 026_tasks |
-| 000029 | 027_task_comments |
+| 000029 + 000031 | 027_task_comments |
+| 000032 | 006 (modules trial, tasks core) |

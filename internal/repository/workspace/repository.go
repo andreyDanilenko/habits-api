@@ -350,12 +350,10 @@ func (r *Repository) AddWorkspaceModule(ctx context.Context, workspaceID, module
 	return nil
 }
 
-// SetWorkspaceModuleStatus выставляет статус модуля в workspace (active / disabled).
+// SetWorkspaceModuleStatus выставляет статус модуля в workspace (active / trial / disabled).
 func (r *Repository) SetWorkspaceModuleStatus(ctx context.Context, workspaceID, moduleID uuid.UUID, status string) error {
-	res, err := r.db.ExecContext(ctx,
-		`UPDATE workspace_modules SET status = $3 WHERE workspace_id = $1 AND module_id = $2`,
-		workspaceID, moduleID, status,
-	)
+	query := `UPDATE workspace_modules SET status = $3, expires_at = NULL WHERE workspace_id = $1 AND module_id = $2`
+	res, err := r.db.ExecContext(ctx, query, workspaceID, moduleID, status)
 	if err != nil {
 		return fmt.Errorf("set workspace module status: %w", err)
 	}
@@ -366,9 +364,55 @@ func (r *Repository) SetWorkspaceModuleStatus(ctx context.Context, workspaceID, 
 	return nil
 }
 
+// SetWorkspaceModuleTrial добавляет или обновляет триал (админ).
+func (r *Repository) SetWorkspaceModuleTrial(ctx context.Context, workspaceID, moduleID uuid.UUID, days int) error {
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO workspace_modules (workspace_id, module_id, status, activated_at, expires_at)
+		VALUES ($1, $2, 'trial', NOW(), NOW() + ($3 || ' days')::INTERVAL)
+		ON CONFLICT (workspace_id, module_id) DO UPDATE SET
+			status = 'trial',
+			expires_at = NOW() + ($3 || ' days')::INTERVAL
+	`, workspaceID, moduleID, days)
+	return err
+}
+
+// SetWorkspaceModuleFull переводит в полноценную лицензию (админ).
+func (r *Repository) SetWorkspaceModuleFull(ctx context.Context, workspaceID, moduleID uuid.UUID) error {
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE workspace_modules SET status = 'active', expires_at = NULL
+		WHERE workspace_id = $1 AND module_id = $2
+	`, workspaceID, moduleID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// ExtendWorkspaceModuleTrial продлевает триал на N дней (админ).
+func (r *Repository) ExtendWorkspaceModuleTrial(ctx context.Context, workspaceID, moduleID uuid.UUID, days int) error {
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE workspace_modules SET
+			expires_at = GREATEST(COALESCE(expires_at, NOW()), NOW()) + ($3 || ' days')::INTERVAL,
+			status = 'trial'
+		WHERE workspace_id = $1 AND module_id = $2
+	`, workspaceID, moduleID, days)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 // ListAllModules возвращает все модули из справочника (для админа — показать все модули в любом воркспейсе).
 func (r *Repository) ListAllModules(ctx context.Context) ([]model.Module, error) {
-	query := `SELECT id, code, name, description, is_core, created_at FROM modules ORDER BY code`
+	query := `SELECT id, code, name, description, is_core, default_trial_days, created_at FROM modules ORDER BY code`
 	rows, err := r.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("list all modules: %w", err)
@@ -379,12 +423,17 @@ func (r *Repository) ListAllModules(ctx context.Context) ([]model.Module, error)
 		var m model.Module
 		var createdAt time.Time
 		var desc sql.NullString
-		err := rows.Scan(&m.ID, &m.Code, &m.Name, &desc, &m.IsCore, &createdAt)
+		var trialDays sql.NullInt64
+		err := rows.Scan(&m.ID, &m.Code, &m.Name, &desc, &m.IsCore, &trialDays, &createdAt)
 		if err != nil {
 			return nil, fmt.Errorf("scan module: %w", err)
 		}
 		if desc.Valid {
 			m.Description = desc.String
+		}
+		if trialDays.Valid {
+			d := int(trialDays.Int64)
+			m.DefaultTrialDays = &d
 		}
 		m.CreatedAt = createdAt.Format(time.RFC3339)
 		list = append(list, m)
@@ -398,7 +447,7 @@ func (r *Repository) ListAllModules(ctx context.Context) ([]model.Module, error)
 // ListWorkspaceModules возвращает модули, включённые в workspace (join с modules для code).
 func (r *Repository) ListWorkspaceModules(ctx context.Context, workspaceID uuid.UUID) ([]model.WorkspaceModuleInfo, error) {
 	query := `
-		SELECT wm.id, wm.workspace_id, wm.module_id, m.code, wm.status, wm.settings, wm.created_at, m.is_core
+		SELECT wm.id, wm.workspace_id, wm.module_id, m.code, wm.status, wm.expires_at, wm.settings, wm.created_at, m.is_core
 		FROM workspace_modules wm
 		INNER JOIN modules m ON m.id = wm.module_id
 		WHERE wm.workspace_id = $1
@@ -415,6 +464,7 @@ func (r *Repository) ListWorkspaceModules(ctx context.Context, workspaceID uuid.
 		var info model.WorkspaceModuleInfo
 		var createdAt time.Time
 		var settings []byte
+		var expiresAt sql.NullTime
 
 		err := rows.Scan(
 			&info.ID,
@@ -422,6 +472,7 @@ func (r *Repository) ListWorkspaceModules(ctx context.Context, workspaceID uuid.
 			&info.ModuleID,
 			&info.ModuleName,
 			&info.Status,
+			&expiresAt,
 			&settings,
 			&createdAt,
 			&info.IsCore,
@@ -429,8 +480,11 @@ func (r *Repository) ListWorkspaceModules(ctx context.Context, workspaceID uuid.
 		if err != nil {
 			return nil, fmt.Errorf("scan workspace module: %w", err)
 		}
-
-		info.Enabled = info.Status == model.WorkspaceModuleStatusActive
+		if expiresAt.Valid {
+			t := expiresAt.Time.Format(time.RFC3339)
+			info.ExpiresAt = &t
+		}
+		info.Enabled = isModuleEnabled(info.Status, info.ExpiresAt)
 		info.CreatedAt = createdAt.Format(time.RFC3339)
 		info.UpdatedAt = info.CreatedAt
 		if settings != nil && len(settings) > 0 {
@@ -444,12 +498,26 @@ func (r *Repository) ListWorkspaceModules(ctx context.Context, workspaceID uuid.
 	return list, nil
 }
 
+// isModuleEnabled: active или trial (если expires_at в будущем).
+func isModuleEnabled(status string, expiresAt *string) bool {
+	if status == model.WorkspaceModuleStatusActive {
+		return true
+	}
+	if status == model.WorkspaceModuleStatusTrial && expiresAt != nil {
+		t, err := time.Parse(time.RFC3339, *expiresAt)
+		if err == nil && t.After(time.Now()) {
+			return true
+		}
+	}
+	return false
+}
+
 // ListAllModulesWithWorkspaceState возвращает все модули системы с флагом enabled для данного workspace.
 // Нужно для фронта: показать и доступные, и недоступные (заглушки) с возможностью включить.
 func (r *Repository) ListAllModulesWithWorkspaceState(ctx context.Context, workspaceID uuid.UUID) ([]model.WorkspaceModuleInfo, error) {
 	query := `
 		SELECT m.id AS module_id, m.code, m.name, m.is_core,
-		       wm.id AS wm_id, wm.workspace_id, wm.status, wm.settings, wm.created_at
+		       wm.id AS wm_id, wm.workspace_id, wm.status, wm.expires_at, wm.settings, wm.created_at
 		FROM modules m
 		LEFT JOIN workspace_modules wm ON wm.module_id = m.id AND wm.workspace_id = $1
 		ORDER BY m.code
@@ -467,10 +535,11 @@ func (r *Repository) ListAllModulesWithWorkspaceState(ctx context.Context, works
 		var isCore bool
 		var wmID, wmWorkspaceID sql.NullString
 		var status sql.NullString
+		var expiresAt sql.NullTime
 		var settings []byte
 		var createdAt sql.NullTime
 
-		err := rows.Scan(&moduleID, &code, &name, &isCore, &wmID, &wmWorkspaceID, &status, &settings, &createdAt)
+		err := rows.Scan(&moduleID, &code, &name, &isCore, &wmID, &wmWorkspaceID, &status, &expiresAt, &settings, &createdAt)
 		if err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
@@ -488,7 +557,11 @@ func (r *Repository) ListAllModulesWithWorkspaceState(ctx context.Context, works
 		} else {
 			info.Status = model.WorkspaceModuleStatusDisabled
 		}
-		info.Enabled = info.Status == model.WorkspaceModuleStatusActive
+		if expiresAt.Valid {
+			t := expiresAt.Time.Format(time.RFC3339)
+			info.ExpiresAt = &t
+		}
+		info.Enabled = isModuleEnabled(info.Status, info.ExpiresAt)
 		if createdAt.Valid {
 			info.CreatedAt = createdAt.Time.Format(time.RFC3339)
 			info.UpdatedAt = info.CreatedAt

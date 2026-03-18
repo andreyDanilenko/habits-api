@@ -103,6 +103,9 @@ func (r *Repository) ListByUserID(ctx context.Context, userID uuid.UUID) ([]mode
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	if list == nil {
+		list = []model.UserModuleLicense{}
+	}
 	return list, nil
 }
 
@@ -128,6 +131,23 @@ func (r *Repository) Create(ctx context.Context, lic *model.UserModuleLicense) e
 	)
 	if err != nil {
 		return fmt.Errorf("create license: %w", err)
+	}
+	return nil
+}
+
+// Revoke переводит лицензию в статус cancelled (отзыв админом).
+func (r *Repository) Revoke(ctx context.Context, licenseID, userID uuid.UUID) error {
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE user_module_licenses
+		SET status = $1, updated_at = NOW()
+		WHERE id = $2 AND user_id = $3 AND status = $4
+	`, model.LicenseStatusCancelled, licenseID, userID, model.LicenseStatusActive)
+	if err != nil {
+		return fmt.Errorf("revoke license: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return sql.ErrNoRows
 	}
 	return nil
 }

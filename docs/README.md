@@ -31,7 +31,9 @@
 
 ### Модули и лицензии
 - [MODULES](modules/MODULES.md) — модули, лицензии, включение/отключение
-- [MODULES_LICENSE_QUICK_GUIDE](modules/MODULES_LICENSE_QUICK_GUIDE.md) — **быстрый гайд по лицензиям**
+- [MODULES_LICENSING_GUIDE](modules/MODULES_LICENSING_GUIDE.md) — полный гайд: таблицы, связи, логика, API
+- [MODULES_PAID_VS_FREE_GUIDE](modules/MODULES_PAID_VS_FREE_GUIDE.md) — **платный/бесплатный/триал: как переключать**
+- [MODULES_LICENSE_QUICK_GUIDE](modules/MODULES_LICENSE_QUICK_GUIDE.md) — быстрые команды (curl, SQL)
 
 ### Схема БД
 - [SCHEMA](schema/SCHEMA.md) — визуализация таблиц

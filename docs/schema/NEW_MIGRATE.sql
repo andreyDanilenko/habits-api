@@ -100,6 +100,7 @@ CREATE TABLE modules (
     name VARCHAR(255) NOT NULL,
     description TEXT,
     is_core BOOLEAN NOT NULL DEFAULT FALSE,
+    default_trial_days INTEGER DEFAULT 30,
     created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
@@ -563,7 +564,90 @@ CREATE INDEX idx_invitations_workspace ON invitations(workspace_id);
 CREATE INDEX idx_invitations_expires ON invitations(expires_at) WHERE status = 'PENDING';
 
 -- =====================================================
--- 12. Права доступа и роли
+-- 12. Уведомления
+-- =====================================================
+CREATE TABLE notifications (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    workspace_id UUID REFERENCES workspaces(id) ON DELETE CASCADE,
+    channel VARCHAR(32) NOT NULL DEFAULT 'activity',
+    event_type VARCHAR(64) NOT NULL,
+    event_key VARCHAR(255) NOT NULL,
+    title TEXT NOT NULL,
+    subtitle TEXT,
+    payload JSONB,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    read_at TIMESTAMP
+);
+
+CREATE INDEX idx_notifications_user_created ON notifications(user_id, created_at DESC);
+CREATE INDEX idx_notifications_user_unread ON notifications(user_id) WHERE read_at IS NULL;
+CREATE UNIQUE INDEX idx_notifications_user_event_key ON notifications(user_id, event_key);
+
+-- =====================================================
+-- 13. Задачи (Tasks Module)
+-- =====================================================
+CREATE TABLE tasks (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    title VARCHAR(500) NOT NULL,
+    description TEXT,
+    type VARCHAR(50) NOT NULL DEFAULT 'task' CHECK (type IN ('task', 'bug', 'feature', 'meeting', 'call', 'email', 'lunch', 'other')),
+    priority VARCHAR(20) NOT NULL DEFAULT 'medium' CHECK (priority IN ('low', 'medium', 'high', 'critical')),
+    status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'in_progress', 'completed', 'cancelled')),
+    due_date TIMESTAMP NOT NULL,
+    due_time VARCHAR(10),
+    reminder_date TIMESTAMP,
+    duration INTEGER,
+    completed_at TIMESTAMP,
+    completed_by UUID REFERENCES users(id),
+    completion_note TEXT,
+    is_recurring BOOLEAN NOT NULL DEFAULT FALSE,
+    recurring_pattern JSONB,
+    parent_id UUID REFERENCES tasks(id) ON DELETE SET NULL,
+    assignee_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    deleted_at TIMESTAMP,
+    spent_minutes INTEGER DEFAULT 0
+);
+
+CREATE INDEX idx_tasks_workspace ON tasks(workspace_id, deleted_at);
+CREATE INDEX idx_tasks_assignee ON tasks(assignee_id) WHERE deleted_at IS NULL;
+CREATE INDEX idx_tasks_status ON tasks(status) WHERE deleted_at IS NULL;
+CREATE INDEX idx_tasks_due_date ON tasks(due_date) WHERE deleted_at IS NULL;
+CREATE INDEX idx_tasks_reminder ON tasks(reminder_date) WHERE reminder_date IS NOT NULL AND deleted_at IS NULL;
+CREATE INDEX idx_tasks_created_by ON tasks(created_by) WHERE deleted_at IS NULL;
+CREATE INDEX idx_tasks_parent ON tasks(parent_id) WHERE parent_id IS NOT NULL AND deleted_at IS NULL;
+
+CREATE TABLE task_entity_links (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    entity_type VARCHAR(50) NOT NULL,
+    entity_id UUID NOT NULL,
+    entity_name VARCHAR(255),
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_task_links_task ON task_entity_links(task_id);
+CREATE INDEX idx_task_links_entity ON task_entity_links(entity_type, entity_id);
+
+CREATE TABLE task_comments (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    parent_id UUID REFERENCES task_comments(id) ON DELETE CASCADE,
+    body TEXT NOT NULL,
+    created_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_task_comments_task ON task_comments(task_id);
+CREATE INDEX idx_task_comments_parent ON task_comments(parent_id);
+CREATE INDEX idx_task_comments_created_at ON task_comments(task_id, created_at DESC);
+
+-- =====================================================
+-- 14. Права доступа и роли
 -- =====================================================
 CREATE TABLE permission_catalog (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -637,7 +721,7 @@ CREATE INDEX idx_role_inheritance_child ON role_inheritance(child_role_id);
 CREATE INDEX idx_role_inheritance_parent ON role_inheritance(parent_role_id);
 
 -- =====================================================
--- 13. Триггеры и функции
+-- 15. Триггеры и функции
 -- =====================================================
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
@@ -657,7 +741,7 @@ CREATE TRIGGER update_habits_updated_at
     FOR EACH ROW 
     EXECUTE FUNCTION update_updated_at_column();
 
-CREATE OR REPLACE FUNCTION fn_workspace_enable_core_modules()
+CREATE OR REPLACE FUNCTION fn_workspace_enable_modules()
 RETURNS TRIGGER AS $$
 BEGIN
     INSERT INTO workspace_modules (workspace_id, module_id, status, activated_at)
@@ -665,14 +749,21 @@ BEGIN
     FROM modules m
     WHERE m.is_core = TRUE
     ON CONFLICT (workspace_id, module_id) DO NOTHING;
+
+    INSERT INTO workspace_modules (workspace_id, module_id, status, activated_at, expires_at)
+    SELECT NEW.id, m.id, 'trial', NOW(), NOW() + (m.default_trial_days || ' days')::INTERVAL
+    FROM modules m
+    WHERE m.is_core = FALSE AND m.default_trial_days > 0
+    ON CONFLICT (workspace_id, module_id) DO NOTHING;
+
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER tr_workspace_enable_core_modules
+CREATE TRIGGER tr_workspace_enable_modules
     AFTER INSERT ON workspaces
     FOR EACH ROW
-    EXECUTE PROCEDURE fn_workspace_enable_core_modules();
+    EXECUTE PROCEDURE fn_workspace_enable_modules();
 
 CREATE OR REPLACE FUNCTION fn_create_system_roles()
 RETURNS TRIGGER AS $$
@@ -693,20 +784,21 @@ CREATE TRIGGER tr_create_system_roles
     EXECUTE PROCEDURE fn_create_system_roles();
 
 -- =====================================================
--- 14. Инициализация модулей
+-- 16. Инициализация модулей
 -- =====================================================
-INSERT INTO modules (id, code, name, description, is_core) VALUES
-    (gen_random_uuid(), 'habits', 'Привычки', 'Трекер привычек и календарь', TRUE),
-    (gen_random_uuid(), 'crm', 'CRM', 'Контакты и сделки', TRUE),
-    (gen_random_uuid(), 'projects', 'Проекты', 'Группировка сущностей в проекты', TRUE),
-    (gen_random_uuid(), 'notes', 'Заметки', 'Простые заметки по воркспейсу', FALSE),
-    (gen_random_uuid(), 'inventory', 'Склад', 'Учёт остатков и номенклатуры (в разработке)', FALSE),
-    (gen_random_uuid(), 'finance', 'Финансы', 'Проводки и отчёты (в разработке)', FALSE),
-    (gen_random_uuid(), 'hr', 'HR', 'Сотрудники и роли (в разработке)', FALSE)
+INSERT INTO modules (id, code, name, description, is_core, default_trial_days) VALUES
+    (gen_random_uuid(), 'habits', 'Привычки', 'Трекер привычек и календарь', TRUE, NULL),
+    (gen_random_uuid(), 'crm', 'CRM', 'Контакты и сделки', TRUE, NULL),
+    (gen_random_uuid(), 'projects', 'Проекты', 'Группировка сущностей в проекты', TRUE, NULL),
+    (gen_random_uuid(), 'tasks', 'Задачи', 'Управление задачами и напоминаниями', TRUE, NULL),
+    (gen_random_uuid(), 'notes', 'Заметки', 'Простые заметки по воркспейсу', FALSE, 30),
+    (gen_random_uuid(), 'inventory', 'Склад', 'Учёт остатков и номенклатуры (в разработке)', FALSE, 30),
+    (gen_random_uuid(), 'finance', 'Финансы', 'Проводки и отчёты (в разработке)', FALSE, 30),
+    (gen_random_uuid(), 'hr', 'HR', 'Сотрудники и роли (в разработке)', FALSE, 30)
 ON CONFLICT (code) DO NOTHING;
 
 -- =====================================================
--- 15. Инициализация прав
+-- 17. Инициализация прав
 -- =====================================================
 INSERT INTO permission_catalog (module_code, entity_type, action, name, is_system) VALUES
     ('crm', 'deal', 'create', 'Создание сделки', true),
@@ -747,5 +839,9 @@ INSERT INTO permission_catalog (module_code, entity_type, action, name, is_syste
     ('workspace', 'member', 'remove', 'Удаление участников из workspace', true),
     ('workspace', 'role', 'manage', 'Управление ролями workspace', true),
     ('workspace', 'module', 'manage', 'Управление модулями workspace', true),
-    ('workspace', 'module', 'read', 'Просмотр списка модулей workspace', true)
+    ('workspace', 'module', 'read', 'Просмотр списка модулей workspace', true),
+    ('tasks', 'task', 'create', 'Создание задачи', true),
+    ('tasks', 'task', 'read', 'Просмотр задачи', true),
+    ('tasks', 'task', 'update', 'Редактирование задачи', true),
+    ('tasks', 'task', 'delete', 'Удаление задачи', true)
 ON CONFLICT (module_code, entity_type, action) DO NOTHING;

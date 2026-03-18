@@ -406,6 +406,9 @@ func (h *Handler) GetMyLicenses(c *gin.Context) {
 		h.responder.InternalServerError(c, "Failed to get licenses")
 		return
 	}
+	if list == nil {
+		list = []model.UserModuleLicense{}
+	}
 	h.responder.SuccessWithData(c, gin.H{"licenses": list})
 }
 

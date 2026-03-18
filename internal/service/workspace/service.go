@@ -217,6 +217,19 @@ func (s *Service) HasAccess(ctx context.Context, workspaceID, userID string, use
 	return s.repo.HasAccess(ctx, wsID, uid)
 }
 
+// GetForAdmin возвращает workspace по ID без проверки доступа (только админ).
+func (s *Service) GetForAdmin(ctx context.Context, workspaceID string) (*model.Workspace, error) {
+	wsID, err := uuid.Parse(workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	ws, err := s.repo.Get(ctx, wsID)
+	if err != nil || ws == nil {
+		return nil, ErrWorkspaceNotFound
+	}
+	return ws, nil
+}
+
 func (s *Service) ListAllForAdmin(ctx context.Context) ([]model.Workspace, error) {
 	return s.repo.ListAll(ctx)
 }
@@ -323,13 +336,19 @@ func (s *Service) DisableModule(ctx context.Context, workspaceID, userID string,
 	return s.repo.SetWorkspaceModuleStatus(ctx, wsID, modID, model.WorkspaceModuleStatusDisabled)
 }
 
-// ListMyLicenses возвращает активные лицензии текущего пользователя (для UI: какие модули можно включать).
+// ListMyLicenses возвращает активные лицензии пользователя (для UI: какие модули можно включать).
+// Используется и для текущего пользователя (GET /me/module-licenses), и для админа (GET /admin/users/:id/licenses).
 func (s *Service) ListMyLicenses(ctx context.Context, userID string) ([]model.UserModuleLicense, error) {
 	uid, err := uuid.Parse(userID)
 	if err != nil {
 		return nil, err
 	}
 	return s.licenseRepo.ListByUserID(ctx, uid)
+}
+
+// ListAllModules возвращает все модули из справочника (для админки — выдача лицензий).
+func (s *Service) ListAllModules(ctx context.Context) ([]model.Module, error) {
+	return s.repo.ListAllModules(ctx)
 }
 
 // CanEnableModuleInWorkspace проверяет, может ли пользователь включить модуль в данном воркспейсе
@@ -549,4 +568,82 @@ func (s *Service) GrantLicense(ctx context.Context, targetUserID, moduleCode, sc
 	}
 	lic.ModuleCode = mod.Code
 	return lic, nil
+}
+
+// RevokeLicense отзывает лицензию у пользователя (только админ). Переводит status в cancelled.
+func (s *Service) RevokeLicense(ctx context.Context, licenseID, targetUserID string) error {
+	licUID, err := uuid.Parse(licenseID)
+	if err != nil {
+		return err
+	}
+	userUID, err := uuid.Parse(targetUserID)
+	if err != nil {
+		return err
+	}
+	return s.licenseRepo.Revoke(ctx, licUID, userUID)
+}
+
+// GetWorkspaceModulesForAdmin возвращает модули workspace (для админки — trial/full управление).
+func (s *Service) GetWorkspaceModulesForAdmin(ctx context.Context, workspaceID string) ([]model.WorkspaceModuleInfo, error) {
+	wsID, err := uuid.Parse(workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	return s.repo.ListAllModulesWithWorkspaceState(ctx, wsID)
+}
+
+// AdminSetWorkspaceModuleTrial — добавить/установить триал (админ).
+func (s *Service) AdminSetWorkspaceModuleTrial(ctx context.Context, workspaceID, moduleCode string, days int) error {
+	wsID, err := uuid.Parse(workspaceID)
+	if err != nil {
+		return err
+	}
+	mod, err := s.repo.GetModuleByCode(ctx, moduleCode)
+	if err != nil || mod == nil {
+		return ErrModuleNotFound
+	}
+	modID, _ := uuid.Parse(mod.ID)
+	return s.repo.SetWorkspaceModuleTrial(ctx, wsID, modID, days)
+}
+
+// AdminSetWorkspaceModuleFull — перевести в полноценную лицензию (админ).
+func (s *Service) AdminSetWorkspaceModuleFull(ctx context.Context, workspaceID, moduleCode string) error {
+	wsID, err := uuid.Parse(workspaceID)
+	if err != nil {
+		return err
+	}
+	mod, err := s.repo.GetModuleByCode(ctx, moduleCode)
+	if err != nil || mod == nil {
+		return ErrModuleNotFound
+	}
+	modID, _ := uuid.Parse(mod.ID)
+	return s.repo.SetWorkspaceModuleFull(ctx, wsID, modID)
+}
+
+// AdminExtendWorkspaceModuleTrial — продлить триал (админ).
+func (s *Service) AdminExtendWorkspaceModuleTrial(ctx context.Context, workspaceID, moduleCode string, days int) error {
+	wsID, err := uuid.Parse(workspaceID)
+	if err != nil {
+		return err
+	}
+	mod, err := s.repo.GetModuleByCode(ctx, moduleCode)
+	if err != nil || mod == nil {
+		return ErrModuleNotFound
+	}
+	modID, _ := uuid.Parse(mod.ID)
+	return s.repo.ExtendWorkspaceModuleTrial(ctx, wsID, modID, days)
+}
+
+// AdminSetWorkspaceModuleDisabled — отключить модуль в workspace (админ).
+func (s *Service) AdminSetWorkspaceModuleDisabled(ctx context.Context, workspaceID, moduleCode string) error {
+	wsID, err := uuid.Parse(workspaceID)
+	if err != nil {
+		return err
+	}
+	mod, err := s.repo.GetModuleByCode(ctx, moduleCode)
+	if err != nil || mod == nil {
+		return ErrModuleNotFound
+	}
+	modID, _ := uuid.Parse(mod.ID)
+	return s.repo.SetWorkspaceModuleStatus(ctx, wsID, modID, model.WorkspaceModuleStatusDisabled)
 }

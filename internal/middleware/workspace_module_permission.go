@@ -122,8 +122,17 @@ func ModuleLicenseMiddleware(workspaceService *workspace.Service, responder *res
 				break
 			}
 		}
-		if found == nil || !found.Enabled {
-			responder.Forbidden(c, "Module not enabled in this workspace")
+		if found == nil {
+			responder.ForbiddenWithCode(c, "MODULE_DISABLED", "Module is not enabled in this workspace", nil)
+			c.Abort()
+			return
+		}
+		if !found.Enabled {
+			if found.Status == model.WorkspaceModuleStatusTrial {
+				responder.ForbiddenWithCode(c, "MODULE_TRIAL_EXPIRED", "Trial period has expired for this module. Please purchase a license or contact your administrator.", map[string]interface{}{"module": moduleCode})
+			} else {
+				responder.ForbiddenWithCode(c, "MODULE_DISABLED", "Module is disabled in this workspace", map[string]interface{}{"module": moduleCode})
+			}
 			c.Abort()
 			return
 		}

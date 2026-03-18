@@ -70,6 +70,14 @@ func (r *Responder) Forbidden(c *gin.Context, message string) {
 	r.WriteError(c, http.StatusForbidden, message)
 }
 
+// ForbiddenWithCode возвращает 403 с конкретным error_code (например MODULE_TRIAL_EXPIRED).
+func (r *Responder) ForbiddenWithCode(c *gin.Context, errorCode, message string, details interface{}) {
+	if message == "" {
+		message = "forbidden"
+	}
+	r.WriteErrorWithCode(c, http.StatusForbidden, errorCode, message, details)
+}
+
 func (r *Responder) NotFound(c *gin.Context, message string) {
 	if message == "" {
 		message = "resource not found"

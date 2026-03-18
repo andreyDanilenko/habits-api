@@ -5,12 +5,13 @@ import "strings"
 // Module — справочник модулей системы (habits, crm, ...).
 // Используется для проверки, какие модули вообще существуют и какой из них core.
 type Module struct {
-	ID          string `json:"id" db:"id"`
-	Code        string `json:"code" db:"code"`
-	Name        string `json:"name" db:"name"`
-	Description string `json:"description,omitempty" db:"description"`
-	IsCore      bool   `json:"isCore" db:"is_core"`
-	CreatedAt   string `json:"createdAt" db:"created_at"`
+	ID               string `json:"id" db:"id"`
+	Code             string `json:"code" db:"code"`
+	Name             string `json:"name" db:"name"`
+	Description      string `json:"description,omitempty" db:"description"`
+	IsCore           bool   `json:"isCore" db:"is_core"`
+	DefaultTrialDays *int   `json:"defaultTrialDays,omitempty" db:"default_trial_days"`
+	CreatedAt        string `json:"createdAt" db:"created_at"`
 }
 
 // WorkspaceModuleStatus — статус модуля в workspace (оплачен/триал/выключен).
@@ -65,16 +66,17 @@ func DetectModuleFromPath(path string) string {
 
 // WorkspaceModuleInfo — ответ API для списка модулей workspace (для фронта).
 type WorkspaceModuleInfo struct {
-	ID          string `json:"id"`
-	WorkspaceID string `json:"workspaceId"`
-	ModuleID    string `json:"moduleId"`
-	ModuleName  string `json:"moduleName"` // code из modules (habits, crm, projects)
-	IsCore      bool   `json:"isCore"`     // признак core-модуля (доступен бесплатно по умолчанию)
-	Status      string `json:"status"`
-	Enabled     bool   `json:"enabled"` // true если status == active
-	Settings    any    `json:"config,omitempty"`
-	CreatedAt   string `json:"createdAt"`
-	UpdatedAt   string `json:"updatedAt"`
+	ID          string  `json:"id"`
+	WorkspaceID string  `json:"workspaceId"`
+	ModuleID    string  `json:"moduleId"`
+	ModuleName  string  `json:"moduleName"` // code из modules (habits, crm, projects)
+	IsCore      bool    `json:"isCore"`     // признак core-модуля (всегда бесплатен)
+	Status      string  `json:"status"`     // active, trial, disabled
+	ExpiresAt   *string `json:"expiresAt,omitempty"` // для trial
+	Enabled     bool    `json:"enabled"`    // true если (active или trial не истёк)
+	Settings    any     `json:"config,omitempty"`
+	CreatedAt   string  `json:"createdAt"`
+	UpdatedAt   string  `json:"updatedAt"`
 }
 
 // Scope лицензии на модуль.

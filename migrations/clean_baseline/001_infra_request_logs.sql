@@ -2,7 +2,7 @@
 -- INFRA: Логи запросов
 -- =============================================================================
 
-CREATE TABLE request_logs (
+CREATE TABLE IF NOT EXISTS request_logs (
     id SERIAL PRIMARY KEY,
     timestamp TIMESTAMP NOT NULL,
     status_code INTEGER NOT NULL,
@@ -14,4 +14,4 @@ CREATE TABLE request_logs (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_request_logs_timestamp ON request_logs(timestamp);
+CREATE INDEX IF NOT EXISTS idx_request_logs_timestamp ON request_logs(timestamp);

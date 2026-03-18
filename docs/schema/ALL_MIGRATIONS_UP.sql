@@ -1,6 +1,6 @@
 -- =============================================================================
 -- Сводный файл всех миграций (только UP, без DROP)
--- Порядок: 000001 .. 000022, 000023, 000025, 000026, 000027 .. 000030
+-- Порядок: 000001 .. 000022, 000023, 000025, 000026, 000027 .. 000032
 --
 -- При изменениях: актуализировать migrations/clean_baseline/ (продакшен)
 -- См. backend/migrations/README.md
@@ -1041,3 +1041,59 @@ ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_type_check;
 ALTER TABLE tasks ADD CONSTRAINT tasks_type_check CHECK (
   type IN ('task', 'bug', 'feature', 'meeting', 'call', 'email', 'lunch', 'other')
 );
+
+-- ========== 000031_task_comments_parent_id ==========
+ALTER TABLE task_comments ADD COLUMN IF NOT EXISTS parent_id UUID REFERENCES task_comments(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS idx_task_comments_parent ON task_comments(parent_id);
+
+-- ========== 000032_modules_trial_and_tasks_core ==========
+-- Модули: trial по умолчанию, tasks всегда бесплатен (is_core)
+ALTER TABLE modules ADD COLUMN IF NOT EXISTS default_trial_days INTEGER DEFAULT 30;
+COMMENT ON COLUMN modules.default_trial_days IS 'Триал для новых workspace. NULL/0 = платный. 30 = 30 дней триала.';
+
+UPDATE modules SET is_core = TRUE WHERE code = 'tasks';
+
+INSERT INTO workspace_modules (workspace_id, module_id, status, activated_at)
+SELECT w.id, m.id, 'active', NOW()
+FROM workspaces w
+CROSS JOIN modules m
+WHERE m.code = 'tasks'
+AND NOT EXISTS (SELECT 1 FROM workspace_modules wm WHERE wm.workspace_id = w.id AND wm.module_id = m.id)
+ON CONFLICT (workspace_id, module_id) DO NOTHING;
+
+UPDATE modules SET default_trial_days = 30 WHERE is_core = FALSE AND (default_trial_days IS NULL OR default_trial_days = 0);
+
+DROP TRIGGER IF EXISTS tr_workspace_enable_core_modules ON workspaces;
+DROP FUNCTION IF EXISTS fn_workspace_enable_core_modules();
+
+CREATE OR REPLACE FUNCTION fn_workspace_enable_modules()
+RETURNS TRIGGER AS $$
+BEGIN
+    INSERT INTO workspace_modules (workspace_id, module_id, status, activated_at)
+    SELECT NEW.id, m.id, 'active', NOW()
+    FROM modules m
+    WHERE m.is_core = TRUE
+    ON CONFLICT (workspace_id, module_id) DO NOTHING;
+
+    INSERT INTO workspace_modules (workspace_id, module_id, status, activated_at, expires_at)
+    SELECT NEW.id, m.id, 'trial', NOW(), NOW() + (m.default_trial_days || ' days')::INTERVAL
+    FROM modules m
+    WHERE m.is_core = FALSE AND m.default_trial_days > 0
+    ON CONFLICT (workspace_id, module_id) DO NOTHING;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER tr_workspace_enable_modules
+    AFTER INSERT ON workspaces
+    FOR EACH ROW
+    EXECUTE FUNCTION fn_workspace_enable_modules();
+
+INSERT INTO workspace_modules (workspace_id, module_id, status, activated_at, expires_at)
+SELECT w.id, m.id, 'trial', NOW(), NOW() + (m.default_trial_days || ' days')::INTERVAL
+FROM workspaces w
+CROSS JOIN modules m
+WHERE m.is_core = FALSE AND m.default_trial_days > 0
+AND NOT EXISTS (SELECT 1 FROM workspace_modules wm WHERE wm.workspace_id = w.id AND wm.module_id = m.id)
+ON CONFLICT (workspace_id, module_id) DO NOTHING;
