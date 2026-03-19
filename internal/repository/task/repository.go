@@ -10,6 +10,7 @@ import (
 	"backend/internal/model"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 )
 
 type Repository struct {
@@ -25,9 +26,9 @@ func (r *Repository) List(ctx context.Context, workspaceID uuid.UUID, filters *m
 		SELECT t.id, t.workspace_id, t.title, t.description, t.type, t.priority, t.status, t.due_date, t.due_time,
 		       t.reminder_date, t.duration, t.completed_at, t.completed_by, t.completion_note,
 		       t.is_recurring, t.recurring_pattern, t.parent_id, t.assignee_id, t.created_by,
-		       t.created_at, t.updated_at, t.spent_minutes
+		       t.created_at, t.updated_at, t.spent_minutes, t.spent_seconds, t.tags
 		FROM tasks t
-	`
+		`
 	args := []interface{}{workspaceID}
 	argIdx := 2
 	where := " WHERE t.workspace_id = $1 AND t.deleted_at IS NULL"
@@ -103,10 +104,10 @@ func (r *Repository) Get(ctx context.Context, taskID, workspaceID uuid.UUID) (*m
 		SELECT id, workspace_id, title, description, type, priority, status, due_date, due_time,
 		       reminder_date, duration, completed_at, completed_by, completion_note,
 		       is_recurring, recurring_pattern, parent_id, assignee_id, created_by,
-		       created_at, updated_at, spent_minutes
+		       created_at, updated_at, spent_minutes, spent_seconds, tags
 		FROM tasks
 		WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL
-	`
+		`
 	t, err := scanTaskRow(r.db.QueryRowContext(ctx, query, taskID, workspaceID))
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -151,15 +152,19 @@ func (r *Repository) Create(ctx context.Context, t *model.Task, createdBy uuid.U
 
 	query := `
 		INSERT INTO tasks (id, workspace_id, title, description, type, priority, status, due_date, due_time,
-		                   reminder_date, duration, parent_id, assignee_id, created_by, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+		                   reminder_date, duration, parent_id, assignee_id, created_by, created_at, updated_at, tags)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 		RETURNING id, created_at, updated_at
 	`
+	tagsVal := t.Tags
+	if tagsVal == nil {
+		tagsVal = []string{}
+	}
 	var createdAt, updatedAt time.Time
 	err = r.db.QueryRowContext(ctx, query,
 		id, wsID, t.Title, nullStr(t.Description), t.Type, t.Priority, t.Status,
 		dueDate, nullStr(t.DueTime), reminderDate, t.Duration,
-		parentID, assigneeID, createdBy, now, now,
+		parentID, assigneeID, createdBy, now, now, pq.Array(tagsVal),
 	).Scan(&t.ID, &createdAt, &updatedAt)
 	if err != nil {
 		return fmt.Errorf("create task: %w", err)
@@ -198,16 +203,20 @@ func (r *Repository) Update(ctx context.Context, t *model.Task) error {
 		UPDATE tasks SET
 			title = $3, description = $4, type = $5, priority = $6, status = $7,
 			due_date = $8, due_time = $9, reminder_date = $10, duration = $11,
-			assignee_id = $12, updated_at = $13
+			spent_minutes = $12, spent_seconds = $13, assignee_id = $14, tags = $15, updated_at = $16
 		WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL
 		RETURNING id, created_at, updated_at
 	`
 	assigneeID, _ := uuid.Parse(t.AssigneeID)
+	tagsVal := t.Tags
+	if tagsVal == nil {
+		tagsVal = []string{}
+	}
 	var createdAt, updatedAt time.Time
 	err = r.db.QueryRowContext(ctx, query,
 		taskID, wsID, t.Title, nullStr(t.Description), t.Type, t.Priority, t.Status,
 		dueDate, nullStr(t.DueTime), reminderDate, t.Duration,
-		assigneeID, now,
+		t.SpentMinutes, t.SpentSeconds, assigneeID, pq.Array(tagsVal), now,
 	).Scan(&t.ID, &createdAt, &updatedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -249,7 +258,7 @@ func (r *Repository) Complete(ctx context.Context, taskID, workspaceID uuid.UUID
 		RETURNING id, workspace_id, title, description, type, priority, status, due_date, due_time,
 		          reminder_date, duration, completed_at, completed_by, completion_note,
 		          is_recurring, recurring_pattern, parent_id, assignee_id, created_by,
-		          created_at, updated_at, spent_minutes
+		          created_at, updated_at, spent_minutes, spent_seconds, tags
 	`
 	t, err := scanTaskRow(r.db.QueryRowContext(ctx, query, taskID, workspaceID, now, completedBy, nullStr(note), now))
 	if err != nil {
@@ -271,7 +280,7 @@ func (r *Repository) Reopen(ctx context.Context, taskID, workspaceID uuid.UUID) 
 		RETURNING id, workspace_id, title, description, type, priority, status, due_date, due_time,
 		          reminder_date, duration, completed_at, completed_by, completion_note,
 		          is_recurring, recurring_pattern, parent_id, assignee_id, created_by,
-		          created_at, updated_at, spent_minutes
+		          created_at, updated_at, spent_minutes, spent_seconds, tags
 	`
 	t, err := scanTaskRow(r.db.QueryRowContext(ctx, query, taskID, workspaceID, time.Now()))
 	if err != nil {
@@ -341,15 +350,16 @@ func scanTask(rows *sql.Rows) (*model.Task, error) {
 	var t model.Task
 	var desc, dueTime, completedBy, completionNote, parentID sql.NullString
 	var reminderDate, completedAt sql.NullTime
-	var duration, spentMinutes sql.NullInt64
+	var duration, spentMinutes, spentSeconds sql.NullInt64
 	var dueDate, createdAt, updatedAt time.Time
 	var recurringPattern []byte
+	var tags pq.StringArray
 
 	err := rows.Scan(
 		&t.ID, &t.WorkspaceID, &t.Title, &desc, &t.Type, &t.Priority, &t.Status,
 		&dueDate, &dueTime, &reminderDate, &duration, &completedAt, &completedBy, &completionNote,
 		&t.IsRecurring, &recurringPattern, &parentID, &t.AssigneeID, &t.CreatedBy,
-		&createdAt, &updatedAt, &spentMinutes,
+		&createdAt, &updatedAt, &spentMinutes, &spentSeconds, &tags,
 	)
 	if err != nil {
 		return nil, err
@@ -387,6 +397,16 @@ func scanTask(rows *sql.Rows) (*model.Task, error) {
 	}
 	if spentMinutes.Valid {
 		t.SpentMinutes = int(spentMinutes.Int64)
+	} else {
+		t.SpentMinutes = 0
+	}
+	if spentSeconds.Valid {
+		t.SpentSeconds = int(spentSeconds.Int64)
+	} else {
+		t.SpentSeconds = 0
+	}
+	if len(tags) > 0 {
+		t.Tags = tags
 	}
 	return &t, nil
 }
@@ -395,15 +415,16 @@ func scanTaskRow(row *sql.Row) (*model.Task, error) {
 	var t model.Task
 	var desc, dueTime, completedBy, completionNote, parentID sql.NullString
 	var reminderDate, completedAt sql.NullTime
-	var duration, spentMinutes sql.NullInt64
+	var duration, spentMinutes, spentSeconds sql.NullInt64
 	var dueDate, createdAt, updatedAt time.Time
 	var recurringPattern []byte
+	var tags pq.StringArray
 
 	err := row.Scan(
 		&t.ID, &t.WorkspaceID, &t.Title, &desc, &t.Type, &t.Priority, &t.Status,
 		&dueDate, &dueTime, &reminderDate, &duration, &completedAt, &completedBy, &completionNote,
 		&t.IsRecurring, &recurringPattern, &parentID, &t.AssigneeID, &t.CreatedBy,
-		&createdAt, &updatedAt, &spentMinutes,
+		&createdAt, &updatedAt, &spentMinutes, &spentSeconds, &tags,
 	)
 	if err != nil {
 		return nil, err
@@ -441,6 +462,13 @@ func scanTaskRow(row *sql.Row) (*model.Task, error) {
 	}
 	if spentMinutes.Valid {
 		t.SpentMinutes = int(spentMinutes.Int64)
+	} else {
+		t.SpentMinutes = 0
+	}
+	if spentSeconds.Valid {
+		t.SpentSeconds = int(spentSeconds.Int64)
+	} else {
+		t.SpentSeconds = 0
 	}
 	return &t, nil
 }
@@ -464,6 +492,103 @@ func parseTimestamp(s string) (time.Time, error) {
 		}
 	}
 	return t, nil
+}
+
+func (r *Repository) ListTaskLinks(ctx context.Context, taskID, workspaceID uuid.UUID) ([]model.TaskTaskLink, error) {
+	// 1) Задачи, которые эта задача блокирует: task_id=this, link_type=blocks, linked_task_id=other
+	// 2) Задачи, которые блокируют эту: linked_task_id=this, link_type=blocks -> task_id=blocker
+	//    Возвращаем как blocked_by, linked_task_id=blocker (с точки зрения текущей задачи)
+	query := `
+		SELECT ttl.id, ttl.task_id, ttl.linked_task_id, ttl.link_type, ttl.created_at,
+		       lt.title AS linked_title, lt.priority AS linked_priority
+		FROM task_task_links ttl
+		JOIN tasks t ON t.id = ttl.task_id AND t.workspace_id = $2 AND t.deleted_at IS NULL
+		JOIN tasks lt ON lt.id = ttl.linked_task_id AND lt.deleted_at IS NULL
+		WHERE ttl.task_id = $1 AND ttl.link_type = 'blocks'
+		UNION ALL
+		SELECT ttl.id, ttl.linked_task_id AS task_id, ttl.task_id AS linked_task_id, 'blocked_by', ttl.created_at,
+		       lt.title AS linked_title, lt.priority AS linked_priority
+		FROM task_task_links ttl
+		JOIN tasks t ON t.id = ttl.linked_task_id AND t.workspace_id = $2 AND t.deleted_at IS NULL
+		JOIN tasks lt ON lt.id = ttl.task_id AND lt.deleted_at IS NULL
+		WHERE ttl.linked_task_id = $1 AND ttl.link_type = 'blocks'
+		ORDER BY created_at
+	`
+	rows, err := r.db.QueryContext(ctx, query, taskID, workspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("list task links: %w", err)
+	}
+	defer rows.Close()
+
+	var list []model.TaskTaskLink
+	for rows.Next() {
+		var l model.TaskTaskLink
+		var createdAt time.Time
+		var linkedTitle, linkedPriority string
+		if err := rows.Scan(&l.ID, &l.TaskID, &l.LinkedTaskID, &l.LinkType, &createdAt, &linkedTitle, &linkedPriority); err != nil {
+			return nil, err
+		}
+		l.CreatedAt = createdAt.Format(time.RFC3339)
+		l.LinkedTitle = linkedTitle
+		l.LinkedPriority = linkedPriority
+		list = append(list, l)
+	}
+	return list, rows.Err()
+}
+
+func (r *Repository) AddTaskLink(ctx context.Context, taskID, workspaceID uuid.UUID, linkedTaskID uuid.UUID, linkType string) (*model.TaskTaskLink, error) {
+	// Проверяем, что обе задачи существуют и в том же workspace
+	var count int
+	err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM tasks WHERE id IN ($1, $2) AND workspace_id = $3 AND deleted_at IS NULL`,
+		taskID, linkedTaskID, workspaceID,
+	).Scan(&count)
+	if err != nil || count != 2 {
+		return nil, fmt.Errorf("tasks not found or different workspace")
+	}
+	if taskID == linkedTaskID {
+		return nil, fmt.Errorf("task cannot link to itself")
+	}
+
+	id := uuid.New()
+	now := time.Now()
+	query := `
+		INSERT INTO task_task_links (id, task_id, linked_task_id, link_type, created_at)
+		VALUES ($1, $2, $3, $4, $5)
+		RETURNING id, task_id, linked_task_id, link_type, created_at
+	`
+	var l model.TaskTaskLink
+	var createdAt time.Time
+	err = r.db.QueryRowContext(ctx, query, id, taskID, linkedTaskID, linkType, now).Scan(
+		&l.ID, &l.TaskID, &l.LinkedTaskID, &l.LinkType, &createdAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("add task link: %w", err)
+	}
+	l.CreatedAt = createdAt.Format(time.RFC3339)
+
+	// Получаем title и priority связанной задачи
+	var linkedTitle, linkedPriority string
+	_ = r.db.QueryRowContext(ctx, `SELECT title, priority FROM tasks WHERE id = $1`, linkedTaskID).Scan(&linkedTitle, &linkedPriority)
+	l.LinkedTitle = linkedTitle
+	l.LinkedPriority = linkedPriority
+	return &l, nil
+}
+
+func (r *Repository) DeleteTaskLink(ctx context.Context, linkID, workspaceID uuid.UUID) error {
+	res, err := r.db.ExecContext(ctx, `
+		DELETE FROM task_task_links ttl
+		USING tasks t
+		WHERE ttl.id = $1 AND (ttl.task_id = t.id OR ttl.linked_task_id = t.id) AND t.workspace_id = $2
+	`, linkID, workspaceID)
+	if err != nil {
+		return fmt.Errorf("delete task link: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 func (r *Repository) ListComments(ctx context.Context, taskID, workspaceID uuid.UUID) ([]model.TaskComment, error) {
@@ -559,6 +684,117 @@ func (r *Repository) DeleteComment(ctx context.Context, commentID, workspaceID u
 	`, commentID, workspaceID)
 	if err != nil {
 		return fmt.Errorf("delete comment: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (r *Repository) ListAttachments(ctx context.Context, taskID, workspaceID uuid.UUID) ([]model.TaskAttachment, error) {
+	query := `
+		SELECT ta.id, ta.task_id, ta.file_name, ta.file_path, ta.file_size, ta.mime_type, ta.uploaded_by, ta.created_at
+		FROM task_attachments ta
+		JOIN tasks t ON t.id = ta.task_id AND t.workspace_id = $2 AND t.deleted_at IS NULL
+		WHERE ta.task_id = $1
+		ORDER BY ta.created_at ASC
+	`
+	rows, err := r.db.QueryContext(ctx, query, taskID, workspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("list attachments: %w", err)
+	}
+	defer rows.Close()
+
+	var list []model.TaskAttachment
+	for rows.Next() {
+		var a model.TaskAttachment
+		var fileSize sql.NullInt64
+		var mimeType sql.NullString
+		var createdAt time.Time
+		if err := rows.Scan(&a.ID, &a.TaskID, &a.FileName, &a.FilePath, &fileSize, &mimeType, &a.UploadedBy, &createdAt); err != nil {
+			return nil, err
+		}
+		if fileSize.Valid {
+			s := int(fileSize.Int64)
+			a.FileSize = &s
+		}
+		if mimeType.Valid {
+			a.MimeType = mimeType.String
+		}
+		a.CreatedAt = createdAt.Format(time.RFC3339)
+		list = append(list, a)
+	}
+	return list, rows.Err()
+}
+
+func (r *Repository) CreateAttachment(ctx context.Context, workspaceID uuid.UUID, a *model.TaskAttachment) error {
+	taskID, _ := uuid.Parse(a.TaskID)
+	uploadedBy, _ := uuid.Parse(a.UploadedBy)
+	var fileSizeVal interface{}
+	if a.FileSize != nil {
+		fileSizeVal = *a.FileSize
+	}
+	now := time.Now()
+	query := `
+		INSERT INTO task_attachments (id, task_id, file_name, file_path, file_size, mime_type, uploaded_by, created_at)
+		SELECT $1, $2, $3, $4, $5, $6, $7, $8
+		FROM tasks t
+		WHERE t.id = $2 AND t.workspace_id = $9 AND t.deleted_at IS NULL
+	`
+	res, err := r.db.ExecContext(ctx, query,
+		a.ID, taskID, a.FileName, a.FilePath, fileSizeVal, nullStr(a.MimeType), uploadedBy, now, workspaceID,
+	)
+	if err != nil {
+		return fmt.Errorf("create attachment: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	a.CreatedAt = now.Format(time.RFC3339)
+	return nil
+}
+
+func (r *Repository) GetAttachment(ctx context.Context, attachmentID, workspaceID uuid.UUID) (*model.TaskAttachment, error) {
+	query := `
+		SELECT ta.id, ta.task_id, ta.file_name, ta.file_path, ta.file_size, ta.mime_type, ta.uploaded_by, ta.created_at
+		FROM task_attachments ta
+		JOIN tasks t ON t.id = ta.task_id AND t.workspace_id = $2 AND t.deleted_at IS NULL
+		WHERE ta.id = $1
+	`
+	var a model.TaskAttachment
+	var fileSize sql.NullInt64
+	var mimeType sql.NullString
+	var createdAt time.Time
+	err := r.db.QueryRowContext(ctx, query, attachmentID, workspaceID).Scan(
+		&a.ID, &a.TaskID, &a.FileName, &a.FilePath, &fileSize, &mimeType, &a.UploadedBy, &createdAt,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get attachment: %w", err)
+	}
+	if fileSize.Valid {
+		s := int(fileSize.Int64)
+		a.FileSize = &s
+	}
+	if mimeType.Valid {
+		a.MimeType = mimeType.String
+	}
+	a.CreatedAt = createdAt.Format(time.RFC3339)
+	return &a, nil
+}
+
+func (r *Repository) DeleteAttachment(ctx context.Context, attachmentID, workspaceID uuid.UUID) error {
+	res, err := r.db.ExecContext(ctx, `
+		DELETE FROM task_attachments ta
+		USING tasks t
+		WHERE ta.id = $1 AND ta.task_id = t.id AND t.workspace_id = $2
+	`, attachmentID, workspaceID)
+	if err != nil {
+		return fmt.Errorf("delete attachment: %w", err)
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {

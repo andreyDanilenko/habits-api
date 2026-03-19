@@ -24,6 +24,8 @@ type Task struct {
 	CreatedAt     string  `json:"createdAt" db:"created_at"`
 	UpdatedAt     string  `json:"updatedAt" db:"updated_at"`
 	SpentMinutes  int     `json:"spentMinutes" db:"spent_minutes"`
+	SpentSeconds  int     `json:"spentSeconds" db:"spent_seconds"`
+	Tags          []string `json:"tags,omitempty" db:"tags"`
 	Entities      []TaskEntityLink `json:"entities,omitempty" db:"-"`
 }
 
@@ -61,7 +63,10 @@ type UpdateTaskDto struct {
 	DueTime      *string          `json:"dueTime"`
 	ReminderDate *string          `json:"reminderDate"`
 	Duration     *int             `json:"duration"`
-	AssigneeID   *string           `json:"assigneeId"`
+	SpentMinutes *int             `json:"spentMinutes"`
+	SpentSeconds *int             `json:"spentSeconds"`
+	AssigneeID   *string          `json:"assigneeId"`
+	Tags         []string         `json:"tags"`
 	Entities     []TaskEntityLink `json:"entities"`
 }
 
@@ -89,6 +94,37 @@ type CreateTaskCommentDto struct {
 // UpdateTaskCommentDto — DTO для обновления комментария.
 type UpdateTaskCommentDto struct {
 	Body string `json:"body" validate:"required,max=10000"`
+}
+
+// TaskTaskLink — связь между задачами (blocks/blocked_by).
+type TaskTaskLink struct {
+	ID           string `json:"id" db:"id"`
+	TaskID       string `json:"taskId" db:"task_id"`
+	LinkedTaskID string `json:"linkedTaskId" db:"linked_task_id"`
+	LinkType     string `json:"linkType" db:"link_type"` // "blocks" | "blocked_by"
+	CreatedAt    string `json:"createdAt" db:"created_at"`
+	// Денормализованные поля связанной задачи для отображения
+	LinkedTitle    string `json:"linkedTitle" db:"-"`
+	LinkedPriority string `json:"linkedPriority" db:"-"`
+}
+
+// CreateTaskTaskLinkDto — DTO для создания связи.
+type CreateTaskTaskLinkDto struct {
+	LinkedTaskID string `json:"linkedTaskId" validate:"required,uuid"`
+	LinkType     string `json:"linkType" validate:"required,oneof=blocks blocked_by"`
+}
+
+// TaskAttachment — вложение к задаче.
+type TaskAttachment struct {
+	ID         string `json:"id" db:"id"`
+	TaskID     string `json:"taskId" db:"task_id"`
+	FileName   string `json:"fileName" db:"file_name"`
+	FilePath   string `json:"-" db:"file_path"`
+	FileSize   *int   `json:"fileSize,omitempty" db:"file_size"`
+	MimeType   string `json:"mimeType,omitempty" db:"mime_type"`
+	UploadedBy string `json:"uploadedBy" db:"uploaded_by"`
+	CreatedAt  string `json:"createdAt" db:"created_at"`
+	URL        string `json:"url" db:"-"` // URL для скачивания (формируется в handler)
 }
 
 // TaskListFilters — фильтры для списка задач.
