@@ -1,5 +1,7 @@
-// Откат версии миграций до 21 (после удаления 022-025).
+// migrate_force сбрасывает версию миграций (для перехода на новый baseline).
 // Запуск: go run ./cmd/migrate_force
+//
+// После force 0 запустите API — применятся миграции 000001–000027.
 package main
 
 import (
@@ -27,8 +29,8 @@ func main() {
 		log.Fatalf("Create migrate: %v", err)
 	}
 	defer m.Close()
-	if err := m.Force(21); err != nil {
-		log.Fatalf("Force version 21: %v", err)
+	if err := m.Force(0); err != nil {
+		log.Fatalf("Force version 0: %v", err)
 	}
-	log.Println("Migration version set to 21. Run the app to apply 000022.")
+	log.Println("Migration version set to 0. Run the app to apply 000001–000027.")
 }

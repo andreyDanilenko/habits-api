@@ -1,6 +1,6 @@
 -- =============================================================================
 -- Сводный файл всех миграций (только UP, без DROP)
--- Порядок: 000001 .. 000022, 000023, 000025, 000026, 000027 .. 000032
+-- Порядок: 000001 .. 000022, 000023, 000025, 000026, 000027 .. 000034
 --
 -- При изменениях: актуализировать migrations/clean_baseline/ (продакшен)
 -- См. backend/migrations/README.md
@@ -1097,3 +1097,61 @@ CROSS JOIN modules m
 WHERE m.is_core = FALSE AND m.default_trial_days > 0
 AND NOT EXISTS (SELECT 1 FROM workspace_modules wm WHERE wm.workspace_id = w.id AND wm.module_id = m.id)
 ON CONFLICT (workspace_id, module_id) DO NOTHING;
+
+-- ========== 000033_task_task_links ==========
+-- Связанные задачи (blocks/blocked_by как в Jira)
+CREATE TABLE IF NOT EXISTS task_task_links (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    linked_task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    link_type VARCHAR(20) NOT NULL CHECK (link_type IN ('blocks', 'blocked_by')),
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    UNIQUE(task_id, linked_task_id, link_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_task_task_links_task ON task_task_links(task_id);
+CREATE INDEX IF NOT EXISTS idx_task_task_links_linked ON task_task_links(linked_task_id);
+
+COMMENT ON TABLE task_task_links IS 'Связи между задачами: blocks (блокирует), blocked_by (блокируется)';
+
+-- ========== 000034_task_attachments ==========
+CREATE TABLE IF NOT EXISTS task_attachments (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    file_name VARCHAR(255) NOT NULL,
+    file_path VARCHAR(500) NOT NULL,
+    file_size INTEGER,
+    mime_type VARCHAR(100),
+    uploaded_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_task_attachments_task ON task_attachments(task_id);
+
+COMMENT ON TABLE task_attachments IS 'Файлы, прикреплённые к задаче';
+
+-- ========== 000035_task_time_entries ==========
+CREATE TABLE IF NOT EXISTS task_time_entries (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    started_at TIMESTAMP NOT NULL,
+    stopped_at TIMESTAMP,
+    minutes INTEGER,
+    note TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_task_time_entries_task ON task_time_entries(task_id);
+CREATE INDEX IF NOT EXISTS idx_task_time_entries_user ON task_time_entries(user_id);
+CREATE INDEX IF NOT EXISTS idx_task_time_entries_started ON task_time_entries(started_at);
+
+COMMENT ON TABLE task_time_entries IS 'Интервалы учёта времени: таймер или ручной ввод';
+
+-- ========== 000037_task_spent_seconds ==========
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS spent_seconds INTEGER NOT NULL DEFAULT 0;
+COMMENT ON COLUMN tasks.spent_seconds IS 'Секунды затраченного времени (0-59, при суммировании может быть больше)';
+
+-- ========== 000038_task_tags ==========
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}';
+COMMENT ON COLUMN tasks.tags IS 'Теги задачи';
