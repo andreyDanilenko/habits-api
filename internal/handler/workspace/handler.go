@@ -233,6 +233,14 @@ func (h *Handler) GetMembers(c *gin.Context) {
 		return
 	}
 
+	// Подставляем URL аватара для участников с avatar_url
+	for i := range list {
+		if list[i].AvatarURL != nil && *list[i].AvatarURL != "" {
+			url := "/api/v1/users/" + list[i].ID + "/avatar"
+			list[i].AvatarURL = &url
+		}
+	}
+
 	h.responder.SuccessWithData(c, gin.H{"members": list})
 }
 

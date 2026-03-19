@@ -83,6 +83,7 @@ func (h *Handler) RegisterRoutes(r *gin.RouterGroup) {
 	r.GET("/tasks/:taskId/attachments/:attachmentId/preview-token", h.GetPreviewToken)
 	r.DELETE("/tasks/:taskId/attachments/:attachmentId", h.DeleteAttachment)
 	r.GET("/tasks/:taskId/activities", h.ListTaskActivities)
+	r.GET("/tasks/:taskId/activities/count", h.GetTaskActivitiesCount)
 }
 
 func (h *Handler) requireWorkspaceAccess(c *gin.Context) (workspaceID, userID string, ok bool) {
@@ -621,6 +622,20 @@ func (h *Handler) ListTaskActivities(c *gin.Context) {
 		return
 	}
 	h.responder.SuccessWithData(c, gin.H{"activities": list, "total": total})
+}
+
+func (h *Handler) GetTaskActivitiesCount(c *gin.Context) {
+	workspaceID, _, ok := h.requireWorkspaceAccess(c)
+	if !ok {
+		return
+	}
+	taskID := c.Param("taskId")
+	count, err := h.taskSvc.GetTaskActivitiesCount(c.Request.Context(), workspaceID, taskID)
+	if err != nil {
+		h.responder.InternalServerError(c, "Failed to get activities count")
+		return
+	}
+	h.responder.SuccessWithData(c, gin.H{"total": count})
 }
 
 func (h *Handler) DeleteAttachment(c *gin.Context) {

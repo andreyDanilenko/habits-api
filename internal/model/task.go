@@ -75,14 +75,21 @@ type CompleteTaskDto struct {
 	Note string `json:"note"`
 }
 
+// TaskCommentCreatedBy — автор комментария (для отображения аватара и имени).
+type TaskCommentCreatedBy struct {
+	ID        string  `json:"id"`
+	Name      string  `json:"name"`
+	AvatarURL *string `json:"avatarUrl,omitempty"`
+}
+
 // TaskComment — комментарий к задаче (часть потока активности).
 type TaskComment struct {
-	ID        string `json:"id" db:"id"`
-	TaskID    string `json:"taskId" db:"task_id"`
-	ParentID  string `json:"parentId,omitempty" db:"parent_id"`
-	Body      string `json:"body" db:"body"`
-	CreatedBy string `json:"createdBy" db:"created_by"`
-	CreatedAt string `json:"createdAt" db:"created_at"`
+	ID        string               `json:"id" db:"id"`
+	TaskID    string               `json:"taskId" db:"task_id"`
+	ParentID  string               `json:"parentId,omitempty" db:"parent_id"`
+	Body      string               `json:"body" db:"body"`
+	CreatedBy TaskCommentCreatedBy `json:"createdBy" db:"-"`
+	CreatedAt string               `json:"createdAt" db:"created_at"`
 }
 
 // CreateTaskCommentDto — DTO для создания комментария.

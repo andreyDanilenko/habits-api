@@ -369,6 +369,33 @@ func (h *Handler) GetAvatar(c *gin.Context) {
 	c.File(fullPath)
 }
 
+// GetUserAvatar возвращает аватар пользователя по ID (для списков участников, комментариев и т.д.).
+func (h *Handler) GetUserAvatar(c *gin.Context) {
+	userID := c.Param("userId")
+	if userID == "" {
+		h.responder.BadRequest(c, "User ID required")
+		return
+	}
+	if _, err := uuid.Parse(userID); err != nil {
+		h.responder.BadRequest(c, "Invalid user ID")
+		return
+	}
+
+	user, err := h.service.GetUserProfile(c.Request.Context(), userID)
+	if err != nil || user == nil || user.AvatarURL == nil || *user.AvatarURL == "" {
+		h.responder.NotFound(c, "Avatar not found")
+		return
+	}
+
+	fullPath := filepath.Join(h.uploadsDir, *user.AvatarURL)
+	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+		h.responder.NotFound(c, "Avatar not found")
+		return
+	}
+	c.Header("Cache-Control", "public, max-age=86400")
+	c.File(fullPath)
+}
+
 func (h *Handler) VerifyEmail(c *gin.Context) {
 	token := c.Query("token")
 	if token == "" {

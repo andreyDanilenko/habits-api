@@ -593,9 +593,11 @@ func (r *Repository) DeleteTaskLink(ctx context.Context, linkID, workspaceID uui
 
 func (r *Repository) ListComments(ctx context.Context, taskID, workspaceID uuid.UUID) ([]model.TaskComment, error) {
 	query := `
-		SELECT tc.id, tc.task_id, tc.parent_id, tc.body, tc.created_by, tc.created_at
+		SELECT tc.id, tc.task_id, tc.parent_id, tc.body, tc.created_by, tc.created_at,
+		       COALESCE(u.name, u.email, '') AS created_by_name, u.avatar_url AS created_by_avatar
 		FROM task_comments tc
 		JOIN tasks t ON t.id = tc.task_id AND t.workspace_id = $2 AND t.deleted_at IS NULL
+		LEFT JOIN users u ON u.id = tc.created_by
 		WHERE tc.task_id = $1
 		ORDER BY tc.created_at ASC
 	`
@@ -610,13 +612,21 @@ func (r *Repository) ListComments(ctx context.Context, taskID, workspaceID uuid.
 		var c model.TaskComment
 		var parentID *uuid.UUID
 		var createdAt time.Time
-		if err := rows.Scan(&c.ID, &c.TaskID, &parentID, &c.Body, &c.CreatedBy, &createdAt); err != nil {
+		var createdByID string
+		var createdByName string
+		var createdByAvatar sql.NullString
+		if err := rows.Scan(&c.ID, &c.TaskID, &parentID, &c.Body, &createdByID, &createdAt, &createdByName, &createdByAvatar); err != nil {
 			return nil, err
 		}
 		if parentID != nil {
 			c.ParentID = parentID.String()
 		}
 		c.CreatedAt = createdAt.Format(time.RFC3339)
+		c.CreatedBy = model.TaskCommentCreatedBy{ID: createdByID, Name: createdByName}
+		if createdByAvatar.Valid && createdByAvatar.String != "" {
+			url := "/api/v1/users/" + createdByID + "/avatar"
+			c.CreatedBy.AvatarURL = &url
+		}
 		list = append(list, c)
 	}
 	return list, rows.Err()
@@ -633,8 +643,9 @@ func (r *Repository) CreateComment(ctx context.Context, taskID, workspaceID, cre
 	`
 	var createdAt time.Time
 	var retParentID *uuid.UUID
+	var createdByID string
 	err := r.db.QueryRowContext(ctx, query, taskID, body, createdBy, workspaceID, parentID).Scan(
-		&c.ID, &c.TaskID, &retParentID, &c.Body, &c.CreatedBy, &createdAt,
+		&c.ID, &c.TaskID, &retParentID, &c.Body, &createdByID, &createdAt,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -646,6 +657,7 @@ func (r *Repository) CreateComment(ctx context.Context, taskID, workspaceID, cre
 		c.ParentID = retParentID.String()
 	}
 	c.CreatedAt = createdAt.Format(time.RFC3339)
+	enrichCommentCreator(ctx, r.db, &c, createdByID)
 	return &c, nil
 }
 
@@ -653,6 +665,7 @@ func (r *Repository) UpdateComment(ctx context.Context, commentID, workspaceID, 
 	var c model.TaskComment
 	var parentID *uuid.UUID
 	var createdAt time.Time
+	var createdByID string
 	query := `
 		UPDATE task_comments tc
 		SET body = $4
@@ -661,7 +674,7 @@ func (r *Repository) UpdateComment(ctx context.Context, commentID, workspaceID, 
 		RETURNING tc.id, tc.task_id, tc.parent_id, tc.body, tc.created_by, tc.created_at
 	`
 	err := r.db.QueryRowContext(ctx, query, commentID, workspaceID, userID, body).Scan(
-		&c.ID, &c.TaskID, &parentID, &c.Body, &c.CreatedBy, &createdAt,
+		&c.ID, &c.TaskID, &parentID, &c.Body, &createdByID, &createdAt,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -673,7 +686,21 @@ func (r *Repository) UpdateComment(ctx context.Context, commentID, workspaceID, 
 		c.ParentID = parentID.String()
 	}
 	c.CreatedAt = createdAt.Format(time.RFC3339)
+	enrichCommentCreator(ctx, r.db, &c, createdByID)
 	return &c, nil
+}
+
+func enrichCommentCreator(ctx context.Context, db *sql.DB, c *model.TaskComment, createdByID string) {
+	c.CreatedBy = model.TaskCommentCreatedBy{ID: createdByID}
+	var name string
+	var avatarURL sql.NullString
+	if err := db.QueryRowContext(ctx, `SELECT COALESCE(name, email, ''), avatar_url FROM users WHERE id = $1`, createdByID).Scan(&name, &avatarURL); err == nil {
+		c.CreatedBy.Name = name
+		if avatarURL.Valid && avatarURL.String != "" {
+			url := "/api/v1/users/" + createdByID + "/avatar"
+			c.CreatedBy.AvatarURL = &url
+		}
+	}
 }
 
 func (r *Repository) DeleteComment(ctx context.Context, commentID, workspaceID uuid.UUID) error {

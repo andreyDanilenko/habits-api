@@ -360,6 +360,18 @@ func (s *Service) ListTaskActivities(ctx context.Context, workspaceID, taskID st
 	return s.activityRepo.ListByEntity(ctx, wsID, activityRepo.EntityTask, tID, limit, offset)
 }
 
+func (s *Service) GetTaskActivitiesCount(ctx context.Context, workspaceID, taskID string) (int, error) {
+	wsID, err := uuid.Parse(workspaceID)
+	if err != nil {
+		return 0, err
+	}
+	tID, err := uuid.Parse(taskID)
+	if err != nil {
+		return 0, err
+	}
+	return s.activityRepo.CountByEntity(ctx, wsID, activityRepo.EntityTask, tID)
+}
+
 func applyUpdate(t *model.Task, dto model.UpdateTaskDto) {
 	if dto.Title != nil {
 		t.Title = *dto.Title

@@ -290,11 +290,14 @@ func (c *Container) RegisterRoutes(r *router.Router) {
 	protected.Use(middleware.ModuleLicenseMiddleware(c.WorkspaceService, c.Responder))
 	protected.Use(middleware.PermissionMiddleware(c.Enforcer, c.PermissionService, c.Responder))
 
-	// Protected auth routes (me)
-	protectedAuthGroup := protected.Group("/auth")
-	c.AuthHandler.RegisterProtectedRoutes(protectedAuthGroup)
+		// Protected auth routes (me)
+		protectedAuthGroup := protected.Group("/auth")
+		c.AuthHandler.RegisterProtectedRoutes(protectedAuthGroup)
 
-	// Me (текущий пользователь): права в workspace, уведомления
+		// Avatar по ID пользователя (для списков участников, комментариев)
+		protected.GET("/users/:userId/avatar", c.AuthHandler.GetUserAvatar)
+
+		// Me (текущий пользователь): права в workspace, уведомления
 	meGroup := protected.Group("/me")
 	meGroup.GET("/permissions", c.PermissionHandler.GetMyPermissions)
 	c.NotificationHandler.RegisterRoutes(meGroup)

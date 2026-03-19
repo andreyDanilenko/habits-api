@@ -110,6 +110,16 @@ func (r *Repository) List(ctx context.Context, workspaceID uuid.UUID, limit, off
 	return list, total, rows.Err()
 }
 
+// CountByEntity возвращает количество активностей по сущности (лёгкий запрос для счётчика).
+func (r *Repository) CountByEntity(ctx context.Context, workspaceID uuid.UUID, entityType string, entityID uuid.UUID) (int, error) {
+	var total int
+	err := r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM activities
+		WHERE workspace_id = $1 AND entity_type = $2 AND entity_id = $3
+	`, workspaceID, entityType, entityID).Scan(&total)
+	return total, err
+}
+
 // ListByEntity возвращает активности по сущности (например, task_id).
 func (r *Repository) ListByEntity(ctx context.Context, workspaceID uuid.UUID, entityType string, entityID uuid.UUID, limit, offset int) ([]model.Activity, int, error) {
 	if limit <= 0 {

@@ -582,7 +582,8 @@ func (r *Repository) ListMembers(ctx context.Context, workspaceID uuid.UUID) ([]
 	query := `
 		SELECT u.id, u.email, COALESCE(u.name, '') AS name,
 		       TRIM(uw.role) AS system_role,
-		       uw.created_at
+		       uw.created_at,
+		       u.avatar_url
 		FROM user_workspaces uw
 		JOIN users u ON u.id = uw.user_id
 		WHERE uw.workspace_id = $1
@@ -605,7 +606,8 @@ func (r *Repository) ListMembers(ctx context.Context, workspaceID uuid.UUID) ([]
 		var m model.WorkspaceMember
 		var createdAt time.Time
 		var role string
-		err := rows.Scan(&m.ID, &m.Email, &m.Name, &role, &createdAt)
+		var avatarURL sql.NullString
+		err := rows.Scan(&m.ID, &m.Email, &m.Name, &role, &createdAt, &avatarURL)
 		if err != nil {
 			return nil, fmt.Errorf("scan member: %w", err)
 		}
@@ -617,6 +619,9 @@ func (r *Repository) ListMembers(ctx context.Context, workspaceID uuid.UUID) ([]
 			m.SystemRole = role // кастомная роль — сохраняем имя как есть
 		}
 		m.JoinedAt = createdAt.Format(time.RFC3339)
+		if avatarURL.Valid && avatarURL.String != "" {
+			m.AvatarURL = &avatarURL.String
+		}
 		list = append(list, m)
 	}
 	if err := rows.Err(); err != nil {
