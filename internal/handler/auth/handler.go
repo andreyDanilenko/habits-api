@@ -2,6 +2,9 @@ package auth
 
 import (
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -13,6 +16,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
+	"github.com/google/uuid"
 )
 
 func (h *Handler) RegisterRoutes(r *gin.RouterGroup) {
@@ -61,14 +65,20 @@ func (h *Handler) registerPublicRoutesWithLimiters(r *gin.RouterGroup, cfg *midd
 
 func (h *Handler) RegisterProtectedRoutes(r *gin.RouterGroup) {
 	r.GET(RouteMe, docMe(h))
+	r.PATCH(RouteMe, docUpdateProfile(h))
+	r.POST(RouteMeAvatar, docUploadAvatar(h))
+	r.GET(RouteMeAvatar, docGetAvatar(h))
 	r.POST(RouteChangePassword, docChangePassword(h))
 }
+
+const RouteMeAvatar = "/me/avatar"
 
 type Handler struct {
 	service       *authService.AuthService
 	cookieManager *cookies.Manager
 	validate      *validator.Validate
 	responder     *response.Responder
+	uploadsDir    string
 }
 
 func NewHandler(
@@ -76,12 +86,17 @@ func NewHandler(
 	cookieManager *cookies.Manager,
 	responder *response.Responder,
 	validate *validator.Validate,
+	uploadsDir string,
 ) *Handler {
+	if uploadsDir == "" {
+		uploadsDir = "./uploads"
+	}
 	return &Handler{
 		service:       service,
 		cookieManager: cookieManager,
 		validate:      validate,
 		responder:     responder,
+		uploadsDir:    uploadsDir,
 	}
 }
 
@@ -115,7 +130,7 @@ func (h *Handler) Login(c *gin.Context) {
 	h.cookieManager.SetToken(c.Writer, "refresh_token", loginResp.RefreshToken, refreshExpiresAt)
 
 	h.responder.SuccessWithData(c, gin.H{
-		"user":       loginResp.User,
+		"user":       h.withAvatarURL(loginResp.User),
 		"expires_in": loginResp.ExpiresIn,
 	})
 }
@@ -200,7 +215,7 @@ func (h *Handler) Register(c *gin.Context) {
 		refreshExpiresAt := time.Now().Add(30 * 24 * time.Hour)
 		h.cookieManager.SetToken(c.Writer, "refresh_token", out.LoginResponse.RefreshToken, refreshExpiresAt)
 		h.responder.Created(c, "User registered successfully", gin.H{
-			"user":       out.LoginResponse.User,
+			"user":       h.withAvatarURL(out.LoginResponse.User),
 			"expires_in": out.LoginResponse.ExpiresIn,
 		})
 		return
@@ -216,6 +231,16 @@ func (h *Handler) Logout(c *gin.Context) {
 	h.responder.SuccessWithMessage(c, "Logged out successfully")
 }
 
+const avatarURLPath = "/api/v1/auth/me/avatar"
+
+func (h *Handler) withAvatarURL(user *model.User) *model.User {
+	if user != nil && user.AvatarURL != nil && *user.AvatarURL != "" {
+		url := avatarURLPath
+		user.AvatarURL = &url
+	}
+	return user
+}
+
 func (h *Handler) Me(c *gin.Context) {
 	userID, ok := middleware.GetUserIDFromGin(c)
 	if !ok {
@@ -229,7 +254,119 @@ func (h *Handler) Me(c *gin.Context) {
 		return
 	}
 
-	h.responder.SuccessWithData(c, gin.H{"user": user})
+	h.responder.SuccessWithData(c, gin.H{"user": h.withAvatarURL(user)})
+}
+
+func (h *Handler) UpdateProfile(c *gin.Context) {
+	userID, ok := middleware.GetUserIDFromGin(c)
+	if !ok {
+		h.responder.Unauthorized(c, "Authentication required")
+		return
+	}
+
+	var req model.UpdateProfileRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.responder.BadRequest(c, "Invalid request")
+		return
+	}
+
+	user, err := h.service.UpdateProfile(c.Request.Context(), userID, req)
+	if err != nil {
+		if err == authService.ErrUserNotFound {
+			h.responder.Unauthorized(c, "User not found")
+			return
+		}
+		h.responder.InternalServerError(c, "Failed to update profile")
+		return
+	}
+
+	h.responder.SuccessWithData(c, gin.H{"user": h.withAvatarURL(user)})
+}
+
+func (h *Handler) UploadAvatar(c *gin.Context) {
+	userID, ok := middleware.GetUserIDFromGin(c)
+	if !ok {
+		h.responder.Unauthorized(c, "Authentication required")
+		return
+	}
+
+	file, err := c.FormFile("file")
+	if err != nil {
+		h.responder.BadRequest(c, "File required")
+		return
+	}
+
+	// Проверяем тип файла (только изображения)
+	contentType := file.Header.Get("Content-Type")
+	allowedTypes := map[string]bool{
+		"image/jpeg": true, "image/jpg": true, "image/png": true, "image/gif": true, "image/webp": true,
+	}
+	if !allowedTypes[contentType] {
+		h.responder.BadRequest(c, "Only images (JPEG, PNG, GIF, WebP) are allowed")
+		return
+	}
+
+	ext := filepath.Ext(file.Filename)
+	if ext == "" {
+		ext = ".jpg"
+	}
+	safeName := uuid.New().String() + ext
+	dir := filepath.Join(h.uploadsDir, "avatars", userID)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		h.responder.InternalServerError(c, "Failed to create upload directory")
+		return
+	}
+
+	destPath := filepath.Join(dir, safeName)
+	src, err := file.Open()
+	if err != nil {
+		h.responder.InternalServerError(c, "Failed to read file")
+		return
+	}
+	defer src.Close()
+	dst, err := os.Create(destPath)
+	if err != nil {
+		h.responder.InternalServerError(c, "Failed to save file")
+		return
+	}
+	defer dst.Close()
+	if _, err := io.Copy(dst, src); err != nil {
+		os.Remove(destPath)
+		h.responder.InternalServerError(c, "Failed to save file")
+		return
+	}
+
+	avatarPath := filepath.Join("avatars", userID, safeName)
+	user, err := h.service.UpdateAvatarURL(c.Request.Context(), userID, avatarPath)
+	if err != nil {
+		os.Remove(destPath)
+		h.responder.InternalServerError(c, "Failed to update avatar")
+		return
+	}
+
+	h.responder.SuccessWithData(c, gin.H{"user": h.withAvatarURL(user)})
+}
+
+func (h *Handler) GetAvatar(c *gin.Context) {
+	userID, ok := middleware.GetUserIDFromGin(c)
+	if !ok {
+		h.responder.Unauthorized(c, "Authentication required")
+		return
+	}
+
+	user, err := h.service.GetUserProfile(c.Request.Context(), userID)
+	if err != nil || user == nil || user.AvatarURL == nil || *user.AvatarURL == "" {
+		h.responder.NotFound(c, "Avatar not found")
+		return
+	}
+
+	fullPath := filepath.Join(h.uploadsDir, *user.AvatarURL)
+	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+		h.responder.NotFound(c, "Avatar not found")
+		return
+	}
+	c.Header("Cache-Control", "public, max-age=86400")
+	c.File(fullPath)
 }
 
 func (h *Handler) VerifyEmail(c *gin.Context) {
@@ -258,7 +395,7 @@ func (h *Handler) VerifyEmail(c *gin.Context) {
 	h.cookieManager.SetToken(c.Writer, "refresh_token", resp.RefreshToken, refreshExpiresAt)
 
 	h.responder.SuccessWithData(c, gin.H{
-		"user":       resp.User,
+		"user":       h.withAvatarURL(resp.User),
 		"expires_in": resp.ExpiresIn,
 	})
 }
@@ -354,7 +491,7 @@ func (h *Handler) Refresh(c *gin.Context) {
 	h.cookieManager.SetToken(c.Writer, "refresh_token", resp.RefreshToken, refreshExpiresAt)
 
 	h.responder.SuccessWithData(c, gin.H{
-		"user":       resp.User,
+		"user":       h.withAvatarURL(resp.User),
 		"expires_in": resp.ExpiresIn,
 	})
 }

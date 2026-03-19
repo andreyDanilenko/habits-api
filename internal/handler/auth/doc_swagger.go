@@ -73,6 +73,45 @@ func docLogout(h *Handler) gin.HandlerFunc { return h.Logout }
 // @Security     BearerAuth
 func docMe(h *Handler) gin.HandlerFunc { return h.Me }
 
+// docUpdateProfile wraps UpdateProfile for Swagger.
+// @Summary      Update profile
+// @Description  Update current user name and position
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Param        body  body  model.UpdateProfileRequest  true  "Profile data"
+// @Success      200   {object}  map[string]model.User  "Updated user"
+// @Failure      401   {object}  response.ErrorResponse  "Unauthorized"
+// @Router       /auth/me [patch]
+// @Security     BearerAuth
+func docUpdateProfile(h *Handler) gin.HandlerFunc { return h.UpdateProfile }
+
+// docUploadAvatar wraps UploadAvatar for Swagger.
+// @Summary      Upload avatar
+// @Description  Upload avatar image for current user (JPEG, PNG, GIF, WebP)
+// @Tags         auth
+// @Accept       multipart/form-data
+// @Produce      json
+// @Param        file  formData  file  true  "Avatar image"
+// @Success      200   {object}  map[string]model.User  "Updated user"
+// @Failure      400   {object}  response.ErrorResponse  "Invalid file"
+// @Failure      401   {object}  response.ErrorResponse  "Unauthorized"
+// @Router       /auth/me/avatar [post]
+// @Security     BearerAuth
+func docUploadAvatar(h *Handler) gin.HandlerFunc { return h.UploadAvatar }
+
+// docGetAvatar wraps GetAvatar for Swagger.
+// @Summary      Get avatar
+// @Description  Get current user avatar image
+// @Tags         auth
+// @Produce      image/*
+// @Success      200  "Avatar image"
+// @Failure      401  {object}  response.ErrorResponse  "Unauthorized"
+// @Failure      404  {object}  response.ErrorResponse  "Avatar not found"
+// @Router       /auth/me/avatar [get]
+// @Security     BearerAuth
+func docGetAvatar(h *Handler) gin.HandlerFunc { return h.GetAvatar }
+
 // docRefresh wraps Refresh for Swagger.
 // @Summary      Refreshing the access token (using a refresh cookie)
 // @Tags         auth

@@ -14,6 +14,11 @@ type Config struct {
 	Auth     AuthConfig
 	Email    EmailConfig
 	Realtime RealtimeConfig
+	Uploads  UploadsConfig
+}
+
+type UploadsConfig struct {
+	Dir string `env:"UPLOADS_DIR" envDefault:"./uploads"`
 }
 
 type RealtimeConfig struct {
@@ -99,6 +104,9 @@ func Load() (*Config, error) {
 		},
 		Realtime: RealtimeConfig{
 			RedisURL: getEnv("REDIS_URL", ""),
+		},
+		Uploads: UploadsConfig{
+			Dir: getEnv("UPLOADS_DIR", "./uploads"),
 		},
 	}, nil
 }

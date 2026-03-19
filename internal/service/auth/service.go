@@ -308,6 +308,49 @@ func (s *AuthService) GetUserProfile(ctx context.Context, userID string) (*model
 	return user, nil
 }
 
+// UpdateProfile обновляет имя и должность текущего пользователя.
+func (s *AuthService) UpdateProfile(ctx context.Context, userID string, req model.UpdateProfileRequest) (*model.User, error) {
+	user, err := s.userRepo.FindByID(ctx, userID)
+	if err != nil || user == nil {
+		return nil, ErrUserNotFound
+	}
+	if user.Status != nil && *user.Status != model.UserStatusActive {
+		return nil, ErrUserNotFound
+	}
+
+	if req.Name != nil {
+		user.Name = req.Name
+	}
+	if req.Position != nil {
+		user.Position = req.Position
+	}
+	user.UpdatedAt = time.Now()
+	if err := s.userRepo.Update(ctx, user); err != nil {
+		return nil, fmt.Errorf("update profile: %w", err)
+	}
+	user.Password = ""
+	return user, nil
+}
+
+// UpdateAvatarURL обновляет avatar_url пользователя.
+func (s *AuthService) UpdateAvatarURL(ctx context.Context, userID string, avatarURL string) (*model.User, error) {
+	user, err := s.userRepo.FindByID(ctx, userID)
+	if err != nil || user == nil {
+		return nil, ErrUserNotFound
+	}
+	if user.Status != nil && *user.Status != model.UserStatusActive {
+		return nil, ErrUserNotFound
+	}
+
+	user.AvatarURL = &avatarURL
+	user.UpdatedAt = time.Now()
+	if err := s.userRepo.Update(ctx, user); err != nil {
+		return nil, fmt.Errorf("update avatar: %w", err)
+	}
+	user.Password = ""
+	return user, nil
+}
+
 // Refresh обновляет access token по refresh token. Возвращает новую пару токенов.
 func (s *AuthService) Refresh(ctx context.Context, refreshTokenString string) (*LoginResponse, error) {
 	claims, err := s.tokenGen.Validate(refreshTokenString)

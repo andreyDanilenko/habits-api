@@ -34,9 +34,9 @@ func NewRepository(db *sql.DB) *PostgresUserRepository {
 func (r *PostgresUserRepository) Create(ctx context.Context, user *model.User) error {
 	query := `
 		INSERT INTO users (
-			id, email, password, name, role, 
+			id, email, password, name, role, position,
 			avatar_url, status, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 	`
 
 	_, err := r.db.ExecContext(ctx, query,
@@ -45,6 +45,7 @@ func (r *PostgresUserRepository) Create(ctx context.Context, user *model.User) e
 		user.Password,
 		user.Name,
 		user.Role,
+		user.Position,
 		user.AvatarURL,
 		user.Status,
 		user.CreatedAt,
@@ -56,7 +57,7 @@ func (r *PostgresUserRepository) Create(ctx context.Context, user *model.User) e
 func (r *PostgresUserRepository) FindByEmail(ctx context.Context, email string) (*model.User, error) {
 	query := `
 		SELECT 
-			id, email, password, name, role, 
+			id, email, password, name, role, position,
 			avatar_url, status, created_at, updated_at
 		FROM users 
 		WHERE email = $1 AND status = 'ACTIVE'
@@ -69,6 +70,7 @@ func (r *PostgresUserRepository) FindByEmail(ctx context.Context, email string) 
 		&user.Password,
 		&user.Name,
 		&user.Role,
+		&user.Position,
 		&user.AvatarURL,
 		&user.Status,
 		&user.CreatedAt,
@@ -88,11 +90,11 @@ func (r *PostgresUserRepository) FindByEmail(ctx context.Context, email string) 
 // FindByEmailAnyStatus возвращает пользователя по email без фильтра по status (в т.ч. DELETED — для повторной регистрации).
 func (r *PostgresUserRepository) FindByEmailAnyStatus(ctx context.Context, email string) (*model.User, error) {
 	query := `
-		SELECT id, email, password, name, role, avatar_url, status, created_at, updated_at
+		SELECT id, email, password, name, role, position, avatar_url, status, created_at, updated_at
 		FROM users WHERE email = $1
 	`
 	var user model.User
-	var name, avatarURL sql.NullString
+	var name, position, avatarURL sql.NullString
 	var status sql.NullString
 	err := r.db.QueryRowContext(ctx, query, email).Scan(
 		&user.ID,
@@ -100,6 +102,7 @@ func (r *PostgresUserRepository) FindByEmailAnyStatus(ctx context.Context, email
 		&user.Password,
 		&name,
 		&user.Role,
+		&position,
 		&avatarURL,
 		&status,
 		&user.CreatedAt,
@@ -114,6 +117,9 @@ func (r *PostgresUserRepository) FindByEmailAnyStatus(ctx context.Context, email
 	if name.Valid {
 		user.Name = &name.String
 	}
+	if position.Valid {
+		user.Position = &position.String
+	}
 	if avatarURL.Valid {
 		user.AvatarURL = &avatarURL.String
 	}
@@ -127,7 +133,7 @@ func (r *PostgresUserRepository) FindByEmailAnyStatus(ctx context.Context, email
 func (r *PostgresUserRepository) FindByID(ctx context.Context, id string) (*model.User, error) {
 	query := `
 		SELECT 
-			id, email, password, name, role, 
+			id, email, password, name, role, position,
 			avatar_url, status, created_at, updated_at
 		FROM users 
 		WHERE id = $1 AND status = 'ACTIVE'
@@ -140,6 +146,7 @@ func (r *PostgresUserRepository) FindByID(ctx context.Context, id string) (*mode
 		&user.Password,
 		&user.Name,
 		&user.Role,
+		&user.Position,
 		&user.AvatarURL,
 		&user.Status,
 		&user.CreatedAt,
@@ -159,11 +166,11 @@ func (r *PostgresUserRepository) FindByID(ctx context.Context, id string) (*mode
 // FindByIDAnyStatus возвращает пользователя по ID без фильтра по status (в т.ч. DELETED).
 func (r *PostgresUserRepository) FindByIDAnyStatus(ctx context.Context, id string) (*model.User, error) {
 	query := `
-		SELECT id, email, password, name, role, avatar_url, status, created_at, updated_at
+		SELECT id, email, password, name, role, position, avatar_url, status, created_at, updated_at
 		FROM users WHERE id = $1
 	`
 	var user model.User
-	var name, avatarURL sql.NullString
+	var name, position, avatarURL sql.NullString
 	var status sql.NullString
 	err := r.db.QueryRowContext(ctx, query, id).Scan(
 		&user.ID,
@@ -171,6 +178,7 @@ func (r *PostgresUserRepository) FindByIDAnyStatus(ctx context.Context, id strin
 		&user.Password,
 		&name,
 		&user.Role,
+		&position,
 		&avatarURL,
 		&status,
 		&user.CreatedAt,
@@ -184,6 +192,9 @@ func (r *PostgresUserRepository) FindByIDAnyStatus(ctx context.Context, id strin
 	}
 	if name.Valid {
 		user.Name = &name.String
+	}
+	if position.Valid {
+		user.Position = &position.String
 	}
 	if avatarURL.Valid {
 		user.AvatarURL = &avatarURL.String
@@ -202,9 +213,10 @@ func (r *PostgresUserRepository) Update(ctx context.Context, user *model.User) e
 			password = COALESCE($3, password),
 			name = $4,
 			role = $5,
-			avatar_url = $6,
-			status = $7,
-			updated_at = $8
+			position = $6,
+			avatar_url = $7,
+			status = $8,
+			updated_at = $9
 		WHERE id = $1
 	`
 
@@ -214,6 +226,7 @@ func (r *PostgresUserRepository) Update(ctx context.Context, user *model.User) e
 		user.Password,
 		user.Name,
 		user.Role,
+		user.Position,
 		user.AvatarURL,
 		user.Status,
 		user.UpdatedAt,
@@ -237,7 +250,7 @@ func (r *PostgresUserRepository) Update(ctx context.Context, user *model.User) e
 
 func (r *PostgresUserRepository) ListAll(ctx context.Context) ([]model.User, error) {
 	query := `
-		SELECT id, email, name, role, avatar_url, status, created_at, updated_at
+		SELECT id, email, name, role, position, avatar_url, status, created_at, updated_at
 		FROM users
 		WHERE status = 'ACTIVE'
 		ORDER BY email
@@ -251,13 +264,14 @@ func (r *PostgresUserRepository) ListAll(ctx context.Context) ([]model.User, err
 	var users []model.User
 	for rows.Next() {
 		var u model.User
-		var name, avatarURL sql.NullString
+		var name, position, avatarURL sql.NullString
 		var status sql.NullString
 		err := rows.Scan(
 			&u.ID,
 			&u.Email,
 			&name,
 			&u.Role,
+			&position,
 			&avatarURL,
 			&status,
 			&u.CreatedAt,
@@ -268,6 +282,9 @@ func (r *PostgresUserRepository) ListAll(ctx context.Context) ([]model.User, err
 		}
 		if name.Valid {
 			u.Name = &name.String
+		}
+		if position.Valid {
+			u.Position = &position.String
 		}
 		if avatarURL.Valid {
 			u.AvatarURL = &avatarURL.String
@@ -287,7 +304,7 @@ func (r *PostgresUserRepository) ListAll(ctx context.Context) ([]model.User, err
 // ListAllIncludingDeleted возвращает всех пользователей (ACTIVE и DELETED) для админки.
 func (r *PostgresUserRepository) ListAllIncludingDeleted(ctx context.Context) ([]model.User, error) {
 	query := `
-		SELECT id, email, name, role, avatar_url, status, created_at, updated_at
+		SELECT id, email, name, role, position, avatar_url, status, created_at, updated_at
 		FROM users
 		ORDER BY status, email
 	`
@@ -300,13 +317,14 @@ func (r *PostgresUserRepository) ListAllIncludingDeleted(ctx context.Context) ([
 	var users []model.User
 	for rows.Next() {
 		var u model.User
-		var name, avatarURL sql.NullString
+		var name, position, avatarURL sql.NullString
 		var status sql.NullString
 		err := rows.Scan(
 			&u.ID,
 			&u.Email,
 			&name,
 			&u.Role,
+			&position,
 			&avatarURL,
 			&status,
 			&u.CreatedAt,
@@ -317,6 +335,9 @@ func (r *PostgresUserRepository) ListAllIncludingDeleted(ctx context.Context) ([
 		}
 		if name.Valid {
 			u.Name = &name.String
+		}
+		if position.Valid {
+			u.Position = &position.String
 		}
 		if avatarURL.Valid {
 			u.AvatarURL = &avatarURL.String

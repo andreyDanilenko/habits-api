@@ -170,7 +170,11 @@ func NewContainer(db *sql.DB, gormDB *gorm.DB, cfg *config.Config) (*Container, 
 	)
 
 	cookieManager := cookies.NewManagerFromEnv()
-	authHdlr := authHandler.NewHandler(authSvc, cookieManager, responder, validate)
+	uploadsDir := cfg.Uploads.Dir
+	if uploadsDir == "" {
+		uploadsDir = "./uploads"
+	}
+	authHdlr := authHandler.NewHandler(authSvc, cookieManager, responder, validate, uploadsDir)
 
 	// Workspace handler
 	workspaceHdlr := workspaceHandler.NewHandler(workspaceSvc, responder, validate)
@@ -189,13 +193,13 @@ func NewContainer(db *sql.DB, gormDB *gorm.DB, cfg *config.Config) (*Container, 
 	notesSvc := notesService.NewService(notesRepository)
 	notesHdlr := notesHandler.NewHandler(notesSvc, workspaceSvc, responder, validate)
 
+	// Activity (shared by habits, journal, tasks for RecentActivity / task changes)
+	activityRepository := activityRepo.NewRepository(db)
+
 	// Tasks module
 	taskRepository := taskRepo.NewRepository(db)
-	taskSvc := taskService.NewService(taskRepository)
-	taskHdlr := taskHandler.NewHandler(taskSvc, workspaceSvc, responder, validate)
-
-	// Activity (shared by habits and journal for RecentActivity widget)
-	activityRepository := activityRepo.NewRepository(db)
+	taskSvc := taskService.NewService(taskRepository, activityRepository)
+	taskHdlr := taskHandler.NewHandler(taskSvc, workspaceSvc, responder, validate, uploadsDir)
 
 	// Habits
 	habitsRepository := habitsRepo.NewRepository(db)
