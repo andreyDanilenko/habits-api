@@ -26,9 +26,13 @@
 ### Гайды
 - [ARCHITECTURE](guides/ARCHITECTURE.md) — архитектура backend
 - [SQL_AND_MIGRATIONS_GUIDE](guides/SQL_AND_MIGRATIONS_GUIDE.md) — миграции и соглашения
+- [SQL_MIGRATIONS_SCALING_GUIDE](guides/SQL_MIGRATIONS_SCALING_GUIDE.md) — масштабирование миграций, FK, чистка данных, микросервисы
 - [ERP_LEARNING_GUIDE](guides/ERP_LEARNING_GUIDE.md) — обучение разработке модулей
 - [LOGGING](guides/LOGGING.md) — система логирования
 - **[Developer Guide](guides/developer-guide/README.md)** — полный гайд: структура, БД, модули, план развития, интеграции
+
+### Подготовка к собеседованию
+- [BACKEND_INTERVIEW_SUMMARY](BACKEND_INTERVIEW_SUMMARY.md) — резюме backend, стек, архитектура, самопроверка
 
 ### Модули и лицензии
 - [MODULES](modules/MODULES.md) — модули, лицензии, включение/отключение
