@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"backend/internal/activitylog"
 	"backend/internal/model"
 	activityRepo "backend/internal/repository/activity"
 	journalRepo "backend/internal/repository/journal"
@@ -13,16 +14,19 @@ import (
 )
 
 type Service struct {
-	repo        *journalRepo.Repository
-	activityRepo *activityRepo.Repository
-	publisher   realtime.Publisher
+	repo           *journalRepo.Repository
+	activityWriter activitylog.Writer
+	publisher      realtime.Publisher
 }
 
-func NewService(repo *journalRepo.Repository, activityRepo *activityRepo.Repository, publisher realtime.Publisher) *Service {
+func NewService(repo *journalRepo.Repository, activityWriter activitylog.Writer, publisher realtime.Publisher) *Service {
 	if publisher == nil {
 		publisher = realtime.NoopPublisher{}
 	}
-	return &Service{repo: repo, activityRepo: activityRepo, publisher: publisher}
+	if activityWriter == nil {
+		activityWriter = activitylog.NoopWriter{}
+	}
+	return &Service{repo: repo, activityWriter: activityWriter, publisher: publisher}
 }
 
 func (s *Service) emitActivityEvent(ctx context.Context, workspaceID string) {
@@ -81,8 +85,11 @@ func (s *Service) Create(ctx context.Context, workspaceID, userID string, dto mo
 	uid, _ := uuid.Parse(e.UserID)
 	wsID, _ := uuid.Parse(e.WorkspaceID)
 	entryID, _ := uuid.Parse(e.ID)
-	_ = s.activityRepo.Create(ctx, uid, wsID, activityRepo.TypeJournalCreated, activityRepo.EntityJournal, entryID,
-		"Добавлена запись в дневник", "📝")
+	_ = s.activityWriter.Write(ctx, activitylog.Event{
+		UserID: uid, WorkspaceID: wsID,
+		Type: activityRepo.TypeJournalCreated, EntityType: activityRepo.EntityJournal, EntityID: entryID,
+		Title: "Добавлена запись в дневник", Emoji: "📝",
+	})
 	s.emitActivityEvent(ctx, workspaceID)
 	return e, nil
 }
@@ -116,8 +123,11 @@ func (s *Service) Update(ctx context.Context, workspaceID, entryID string, dto m
 	uid, _ := uuid.Parse(existing.UserID)
 	wsID, _ := uuid.Parse(existing.WorkspaceID)
 	entryUUID, _ := uuid.Parse(existing.ID)
-	_ = s.activityRepo.Create(ctx, uid, wsID, activityRepo.TypeJournalUpdated, activityRepo.EntityJournal, entryUUID,
-		"Обновлена запись в дневнике", "✏️")
+	_ = s.activityWriter.Write(ctx, activitylog.Event{
+		UserID: uid, WorkspaceID: wsID,
+		Type: activityRepo.TypeJournalUpdated, EntityType: activityRepo.EntityJournal, EntityID: entryUUID,
+		Title: "Обновлена запись в дневнике", Emoji: "✏️",
+	})
 	s.emitActivityEvent(ctx, workspaceID)
 	return existing, nil
 }
@@ -137,8 +147,11 @@ func (s *Service) Delete(ctx context.Context, workspaceID, entryID string) error
 	}
 	if entry != nil {
 		uid, _ := uuid.Parse(entry.UserID)
-		_ = s.activityRepo.Create(ctx, uid, wsID, activityRepo.TypeJournalDeleted, activityRepo.EntityJournal, id,
-			"Удалена запись из дневника", "🗑️")
+		_ = s.activityWriter.Write(ctx, activitylog.Event{
+			UserID: uid, WorkspaceID: wsID,
+			Type: activityRepo.TypeJournalDeleted, EntityType: activityRepo.EntityJournal, EntityID: id,
+			Title: "Удалена запись из дневника", Emoji: "🗑️",
+		})
 		s.emitActivityEvent(ctx, workspaceID)
 	}
 	return nil

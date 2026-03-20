@@ -15,6 +15,12 @@ type Config struct {
 	Email    EmailConfig
 	Realtime RealtimeConfig
 	Uploads  UploadsConfig
+	Activity ActivityConfig
+}
+
+// ActivityConfig — запись событий в общую ленту (таблица activities).
+type ActivityConfig struct {
+	Enabled bool // ACTIVITY_LOG_ENABLED, по умолчанию true
 }
 
 type UploadsConfig struct {
@@ -107,6 +113,9 @@ func Load() (*Config, error) {
 		},
 		Uploads: UploadsConfig{
 			Dir: getEnv("UPLOADS_DIR", "./uploads"),
+		},
+		Activity: ActivityConfig{
+			Enabled: getEnvBool("ACTIVITY_LOG_ENABLED", true),
 		},
 	}, nil
 }

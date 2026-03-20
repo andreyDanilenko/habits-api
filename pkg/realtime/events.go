@@ -17,6 +17,13 @@ const (
 	EventDealUpdated = "deal.updated"
 	EventDealDeleted = "deal.deleted"
 
+	// Tasks
+	EventTaskCreated   = "task.created"
+	EventTaskUpdated   = "task.updated"
+	EventTaskDeleted   = "task.deleted"
+	EventTaskCompleted = "task.completed"
+	EventTaskReopened  = "task.reopened"
+
 	// Invitations
 	EventInvitationAccepted = "invitation.accepted"
 )

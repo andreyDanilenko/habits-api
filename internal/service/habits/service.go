@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"backend/internal/activitylog"
 	"backend/internal/model"
 	activityRepo "backend/internal/repository/activity"
 	habitsRepo "backend/internal/repository/habits"
@@ -21,17 +22,21 @@ var (
 )
 
 type Service struct {
-	repo         *habitsRepo.Repository
-	activityRepo *activityRepo.Repository
-	wsRepo       *workspaceRepo.Repository
-	publisher    realtime.Publisher
+	repo           *habitsRepo.Repository
+	activityRepo   *activityRepo.Repository
+	activityWriter activitylog.Writer
+	wsRepo         *workspaceRepo.Repository
+	publisher      realtime.Publisher
 }
 
-func NewService(repo *habitsRepo.Repository, activityRepo *activityRepo.Repository, wsRepo *workspaceRepo.Repository, publisher realtime.Publisher) *Service {
+func NewService(repo *habitsRepo.Repository, activityRepo *activityRepo.Repository, activityWriter activitylog.Writer, wsRepo *workspaceRepo.Repository, publisher realtime.Publisher) *Service {
 	if publisher == nil {
 		publisher = realtime.NoopPublisher{}
 	}
-	return &Service{repo: repo, activityRepo: activityRepo, wsRepo: wsRepo, publisher: publisher}
+	if activityWriter == nil {
+		activityWriter = activitylog.NoopWriter{}
+	}
+	return &Service{repo: repo, activityRepo: activityRepo, activityWriter: activityWriter, wsRepo: wsRepo, publisher: publisher}
 }
 
 func (s *Service) emitHabitEvent(ctx context.Context, workspaceID, eventType string, payload map[string]interface{}) {
@@ -77,8 +82,11 @@ func (s *Service) Create(ctx context.Context, dto model.CreateHabitDto, userID, 
 		return nil, err
 	}
 	hid, _ := uuid.Parse(habit.ID)
-	_ = s.activityRepo.Create(ctx, uid, wid, activityRepo.TypeHabitCreated, activityRepo.EntityHabit, hid,
-		"Создана привычка \""+habit.Title+"\"", "➕")
+	_ = s.activityWriter.Write(ctx, activitylog.Event{
+		UserID: uid, WorkspaceID: wid,
+		Type: activityRepo.TypeHabitCreated, EntityType: activityRepo.EntityHabit, EntityID: hid,
+		Title: "Создана привычка \"" + habit.Title + "\"", Emoji: "➕",
+	})
 	s.emitActivityEvent(ctx, workspaceID)
 	s.emitHabitEvent(ctx, workspaceID, realtime.EventHabitCreated, map[string]interface{}{
 		"habit": habit,
@@ -119,8 +127,11 @@ func (s *Service) Update(ctx context.Context, habitID string, dto model.UpdateHa
 	if err != nil {
 		return nil, err
 	}
-	_ = s.activityRepo.Create(ctx, uid, wid, activityRepo.TypeHabitUpdated, activityRepo.EntityHabit, hid,
-		"Обновлена привычка \""+updated.Title+"\"", "✏️")
+	_ = s.activityWriter.Write(ctx, activitylog.Event{
+		UserID: uid, WorkspaceID: wid,
+		Type: activityRepo.TypeHabitUpdated, EntityType: activityRepo.EntityHabit, EntityID: hid,
+		Title: "Обновлена привычка \"" + updated.Title + "\"", Emoji: "✏️",
+	})
 	s.emitActivityEvent(ctx, workspaceID)
 	s.emitHabitEvent(ctx, workspaceID, realtime.EventHabitUpdated, map[string]interface{}{
 		"habit": updated,
@@ -149,8 +160,11 @@ func (s *Service) Delete(ctx context.Context, habitID, userID, workspaceID strin
 	if err := s.repo.Delete(ctx, hid, habitOwnerID); err != nil {
 		return err
 	}
-	_ = s.activityRepo.Create(ctx, habitOwnerID, wid, activityRepo.TypeHabitDeleted, activityRepo.EntityHabit, hid,
-		"Удалена привычка \""+habit.Title+"\"", "🗑️")
+	_ = s.activityWriter.Write(ctx, activitylog.Event{
+		UserID: habitOwnerID, WorkspaceID: wid,
+		Type: activityRepo.TypeHabitDeleted, EntityType: activityRepo.EntityHabit, EntityID: hid,
+		Title: "Удалена привычка \"" + habit.Title + "\"", Emoji: "🗑️",
+	})
 	s.emitActivityEvent(ctx, workspaceID)
 	s.emitHabitEvent(ctx, workspaceID, realtime.EventHabitDeleted, map[string]interface{}{
 		"habitId": habitID,
@@ -172,8 +186,11 @@ func (s *Service) Complete(ctx context.Context, habitID, userID, workspaceID str
 	if err != nil {
 		return nil, err
 	}
-	_ = s.activityRepo.Create(ctx, uid, wid, activityRepo.TypeHabitCompleted, activityRepo.EntityCompletion, hid,
-		"Завершена привычка \""+habit.Title+"\"", "✅")
+	_ = s.activityWriter.Write(ctx, activitylog.Event{
+		UserID: uid, WorkspaceID: wid,
+		Type: activityRepo.TypeHabitCompleted, EntityType: activityRepo.EntityCompletion, EntityID: hid,
+		Title: "Завершена привычка \"" + habit.Title + "\"", Emoji: "✅",
+	})
 	s.emitActivityEvent(ctx, workspaceID)
 	s.emitHabitEvent(ctx, workspaceID, realtime.EventHabitCompleted, map[string]interface{}{
 		"habitId":    habitID,
@@ -196,8 +213,11 @@ func (s *Service) Toggle(ctx context.Context, habitID, userID, workspaceID strin
 		return false, nil, err
 	}
 	if added {
-		_ = s.activityRepo.Create(ctx, uid, wid, activityRepo.TypeHabitCompleted, activityRepo.EntityCompletion, hid,
-			"Завершена привычка \""+habit.Title+"\"", "✅")
+		_ = s.activityWriter.Write(ctx, activitylog.Event{
+			UserID: uid, WorkspaceID: wid,
+			Type: activityRepo.TypeHabitCompleted, EntityType: activityRepo.EntityCompletion, EntityID: hid,
+			Title: "Завершена привычка \"" + habit.Title + "\"", Emoji: "✅",
+		})
 		s.emitActivityEvent(ctx, workspaceID)
 		s.emitHabitEvent(ctx, workspaceID, realtime.EventHabitCompleted, map[string]interface{}{
 			"habitId":    habitID,

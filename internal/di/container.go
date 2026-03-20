@@ -1,6 +1,7 @@
 package di
 
 import (
+	"backend/internal/activitylog"
 	"backend/internal/authz"
 	"backend/internal/config"
 	adminHandler "backend/internal/handler/admin"
@@ -195,20 +196,24 @@ func NewContainer(db *sql.DB, gormDB *gorm.DB, cfg *config.Config) (*Container, 
 
 	// Activity (shared by habits, journal, tasks for RecentActivity / task changes)
 	activityRepository := activityRepo.NewRepository(db)
+	var activityWriter activitylog.Writer = activitylog.NoopWriter{}
+	if cfg.Activity.Enabled {
+		activityWriter = activitylog.NewDBWriter(activityRepository)
+	}
 
 	// Tasks module
 	taskRepository := taskRepo.NewRepository(db)
-	taskSvc := taskService.NewService(taskRepository, activityRepository)
+	taskSvc := taskService.NewService(taskRepository, activityRepository, activityWriter, rtPublisher)
 	taskHdlr := taskHandler.NewHandler(taskSvc, workspaceSvc, responder, validate, uploadsDir)
 
 	// Habits
 	habitsRepository := habitsRepo.NewRepository(db)
-	habitsSvc := habitsService.NewService(habitsRepository, activityRepository, workspaceRepository, rtPublisher)
+	habitsSvc := habitsService.NewService(habitsRepository, activityRepository, activityWriter, workspaceRepository, rtPublisher)
 	habitsHdlr := habitsHandler.NewHandler(habitsSvc, responder, validate)
 
 	// Journal (no longer depends on habits)
 	journalRepository := journalRepo.NewRepository(db)
-	journalSvc := journalService.NewService(journalRepository, activityRepository, rtPublisher)
+	journalSvc := journalService.NewService(journalRepository, activityWriter, rtPublisher)
 	journalHdlr := journalHandler.NewHandler(journalSvc, workspaceSvc, responder, validate)
 
 	projectRepository := projectRepo.NewRepository(db)

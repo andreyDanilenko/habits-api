@@ -21,12 +21,17 @@ func NewCompletionRepository(db *sql.DB) *CompletionRepository {
 	return &CompletionRepository{db: db}
 }
 
-// Create создает запись о выполнении привычки
+// Create создаёт или обновляет выполнение на дату (UNIQUE habit_id, date, user_id).
+// Повторный Complete за тот же день обновляет notes / rating / time вместо 500.
 func (r *CompletionRepository) Create(ctx context.Context, habitID, userID uuid.UUID, date time.Time, notes string, rating interface{}, completionTime *string) (*model.HabitCompletion, error) {
 	query := `
 		INSERT INTO habit_completions (
 			id, habit_id, user_id, workspace_id, date, notes, rating, time, created_at
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		ON CONFLICT (habit_id, date, user_id) DO UPDATE SET
+			notes = EXCLUDED.notes,
+			rating = EXCLUDED.rating,
+			time = EXCLUDED.time
 		RETURNING id, habit_id, user_id, workspace_id, date, notes, rating, time, created_at
 	`
 

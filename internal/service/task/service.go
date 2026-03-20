@@ -3,22 +3,61 @@ package task
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"time"
 
+	"backend/internal/activitylog"
 	"backend/internal/model"
 	activityRepo "backend/internal/repository/activity"
 	taskRepo "backend/internal/repository/task"
+	"backend/pkg/realtime"
 
 	"github.com/google/uuid"
 )
 
 type Service struct {
-	repo         *taskRepo.Repository
-	activityRepo *activityRepo.Repository
+	repo           *taskRepo.Repository
+	activityRepo   *activityRepo.Repository
+	activityWriter activitylog.Writer
+	publisher      realtime.Publisher
 }
 
-func NewService(repo *taskRepo.Repository, activityRepo *activityRepo.Repository) *Service {
-	return &Service{repo: repo, activityRepo: activityRepo}
+func NewService(repo *taskRepo.Repository, activityRepo *activityRepo.Repository, activityWriter activitylog.Writer, publisher realtime.Publisher) *Service {
+	if activityWriter == nil {
+		activityWriter = activitylog.NoopWriter{}
+	}
+	if publisher == nil {
+		publisher = realtime.NoopPublisher{}
+	}
+	return &Service{repo: repo, activityRepo: activityRepo, activityWriter: activityWriter, publisher: publisher}
+}
+
+func taskRealtimePayload(workspaceID, actorUserID string, t *model.Task) map[string]interface{} {
+	p := map[string]interface{}{
+		"workspaceId": workspaceID,
+		"userId":      actorUserID,
+	}
+	if t != nil {
+		p["taskId"] = t.ID
+		var taskMap map[string]interface{}
+		if b, err := json.Marshal(t); err == nil {
+			_ = json.Unmarshal(b, &taskMap)
+			p["task"] = taskMap
+		}
+	}
+	return p
+}
+
+func (s *Service) emitTaskEvent(ctx context.Context, workspaceID, actorUserID, eventType string, t *model.Task) {
+	ch := realtime.WorkspaceChannel(workspaceID)
+	event := realtime.Event{
+		EventType: eventType,
+		Target:    realtime.Target{Type: "workspace", ID: workspaceID},
+		Payload:   taskRealtimePayload(workspaceID, actorUserID, t),
+		Timestamp: time.Now().UnixMilli(),
+	}
+	_ = s.publisher.Publish(ctx, ch, event)
 }
 
 func (s *Service) List(ctx context.Context, workspaceID string, filters *model.TaskListFilters) ([]model.Task, error) {
@@ -74,8 +113,17 @@ func (s *Service) Create(ctx context.Context, workspaceID, createdBy string, dto
 	if err := s.repo.Create(ctx, t, creatorID); err != nil {
 		return nil, err
 	}
-	_ = s.activityRepo.Create(ctx, creatorID, wsID, activityRepo.TypeTaskCreated, activityRepo.EntityTask, uuid.MustParse(t.ID), "Создал задачу", "📋")
-	return s.repo.Get(ctx, uuid.MustParse(t.ID), wsID)
+	_ = s.activityWriter.Write(ctx, activitylog.Event{
+		UserID: creatorID, WorkspaceID: wsID,
+		Type: activityRepo.TypeTaskCreated, EntityType: activityRepo.EntityTask,
+		EntityID: uuid.MustParse(t.ID), Title: "Создал задачу", Emoji: "📋",
+	})
+	out, err := s.repo.Get(ctx, uuid.MustParse(t.ID), wsID)
+	if err != nil {
+		return nil, err
+	}
+	s.emitTaskEvent(ctx, workspaceID, createdBy, realtime.EventTaskCreated, out)
+	return out, nil
 }
 
 func (s *Service) Update(ctx context.Context, workspaceID, taskID, userID string, dto model.UpdateTaskDto) (*model.Task, error) {
@@ -104,7 +152,12 @@ func (s *Service) Update(ctx context.Context, workspaceID, taskID, userID string
 	}
 	newTotalSec := existing.SpentMinutes*60 + existing.SpentSeconds
 	s.emitTaskUpdateActivity(ctx, uid, wsID, tID, dto, oldTotalSec, newTotalSec)
-	return s.repo.Get(ctx, tID, wsID)
+	updated, err := s.repo.Get(ctx, tID, wsID)
+	if err != nil {
+		return nil, err
+	}
+	s.emitTaskEvent(ctx, workspaceID, userID, realtime.EventTaskUpdated, updated)
+	return updated, nil
 }
 
 func (s *Service) Delete(ctx context.Context, workspaceID, taskID, userID string) error {
@@ -117,10 +170,22 @@ func (s *Service) Delete(ctx context.Context, workspaceID, taskID, userID string
 		return err
 	}
 	uid, _ := uuid.Parse(userID)
+	snapshot, err := s.repo.Get(ctx, tID, wsID)
+	if err != nil {
+		return err
+	}
+	if snapshot == nil {
+		return sql.ErrNoRows
+	}
 	if err := s.repo.Delete(ctx, tID, wsID); err != nil {
 		return err
 	}
-	_ = s.activityRepo.Create(ctx, uid, wsID, activityRepo.TypeTaskDeleted, activityRepo.EntityTask, tID, "Удалил задачу", "🗑️")
+	_ = s.activityWriter.Write(ctx, activitylog.Event{
+		UserID: uid, WorkspaceID: wsID,
+		Type: activityRepo.TypeTaskDeleted, EntityType: activityRepo.EntityTask,
+		EntityID: tID, Title: "Удалил задачу", Emoji: "🗑️",
+	})
+	s.emitTaskEvent(ctx, workspaceID, userID, realtime.EventTaskDeleted, snapshot)
 	return nil
 }
 
@@ -142,7 +207,12 @@ func (s *Service) Complete(ctx context.Context, workspaceID, taskID, completedBy
 		return nil, err
 	}
 	if t != nil {
-		_ = s.activityRepo.Create(ctx, userID, wsID, activityRepo.TypeTaskCompleted, activityRepo.EntityTask, tID, "Отметил задачу выполненной", "✅")
+		_ = s.activityWriter.Write(ctx, activitylog.Event{
+			UserID: userID, WorkspaceID: wsID,
+			Type: activityRepo.TypeTaskCompleted, EntityType: activityRepo.EntityTask,
+			EntityID: tID, Title: "Отметил задачу выполненной", Emoji: "✅",
+		})
+		s.emitTaskEvent(ctx, workspaceID, completedBy, realtime.EventTaskCompleted, t)
 	}
 	return t, err
 }
@@ -162,7 +232,12 @@ func (s *Service) Reopen(ctx context.Context, workspaceID, taskID, userID string
 		return nil, err
 	}
 	if t != nil {
-		_ = s.activityRepo.Create(ctx, uid, wsID, activityRepo.TypeTaskReopened, activityRepo.EntityTask, tID, "Вернул задачу в работу", "🔄")
+		_ = s.activityWriter.Write(ctx, activitylog.Event{
+			UserID: uid, WorkspaceID: wsID,
+			Type: activityRepo.TypeTaskReopened, EntityType: activityRepo.EntityTask,
+			EntityID: tID, Title: "Вернул задачу в работу", Emoji: "🔄",
+		})
+		s.emitTaskEvent(ctx, workspaceID, userID, realtime.EventTaskReopened, t)
 	}
 	return t, err
 }
@@ -345,7 +420,11 @@ func (s *Service) emitTaskUpdateActivity(ctx context.Context, userID, workspaceI
 	} else {
 		return
 	}
-	_ = s.activityRepo.Create(ctx, userID, workspaceID, activityRepo.TypeTaskUpdated, activityRepo.EntityTask, taskID, title, emoji)
+	_ = s.activityWriter.Write(ctx, activitylog.Event{
+		UserID: userID, WorkspaceID: workspaceID,
+		Type: activityRepo.TypeTaskUpdated, EntityType: activityRepo.EntityTask,
+		EntityID: taskID, Title: title, Emoji: emoji,
+	})
 }
 
 func (s *Service) ListTaskActivities(ctx context.Context, workspaceID, taskID string, limit, offset int) ([]model.Activity, int, error) {
