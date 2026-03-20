@@ -11,8 +11,7 @@ CREATE TABLE habit_completions (
     notes TEXT,
     rating INTEGER CHECK (rating >= 1 AND rating <= 5),
     time TIME,
-    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    UNIQUE(habit_id, date, user_id)
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX idx_completions_habit_id ON habit_completions(habit_id);

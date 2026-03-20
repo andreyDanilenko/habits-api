@@ -21,17 +21,12 @@ func NewCompletionRepository(db *sql.DB) *CompletionRepository {
 	return &CompletionRepository{db: db}
 }
 
-// Create создаёт или обновляет выполнение на дату (UNIQUE habit_id, date, user_id).
-// Повторный Complete за тот же день обновляет notes / rating / time вместо 500.
+// Create добавляет одно выполнение (за день может быть несколько строк при daily_goal > 1).
 func (r *CompletionRepository) Create(ctx context.Context, habitID, userID uuid.UUID, date time.Time, notes string, rating interface{}, completionTime *string) (*model.HabitCompletion, error) {
 	query := `
 		INSERT INTO habit_completions (
 			id, habit_id, user_id, workspace_id, date, notes, rating, time, created_at
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-		ON CONFLICT (habit_id, date, user_id) DO UPDATE SET
-			notes = EXCLUDED.notes,
-			rating = EXCLUDED.rating,
-			time = EXCLUDED.time
 		RETURNING id, habit_id, user_id, workspace_id, date, notes, rating, time, created_at
 	`
 
@@ -108,6 +103,7 @@ func (r *CompletionRepository) Toggle(ctx context.Context, habitID, userID uuid.
 		SELECT id, habit_id, user_id, date, notes, rating, time, created_at
 		FROM habit_completions 
 		WHERE habit_id = $1 AND user_id = $2 AND date = $3
+		ORDER BY created_at DESC
 		LIMIT 1
 	`, habitID, userID, normalizedDate).Scan(
 		&existing.ID, &existing.HabitID, &existing.UserID, &existingDate,
@@ -185,11 +181,12 @@ func (r *CompletionRepository) GetCompletionDates(ctx context.Context, habitID, 
 	return dates, rows.Err()
 }
 
-// CountByHabit возвращает количество выполнений для привычки
+// CountByHabit возвращает число календарных дней, в которые была хотя бы одна отметка
+// (несколько выполнений в один день считаются как один день для streak / completion rate).
 func (r *CompletionRepository) CountByHabit(ctx context.Context, habitID, userID uuid.UUID) (int, error) {
 	var n int
 	err := r.db.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM habit_completions WHERE habit_id = $1 AND user_id = $2",
+		"SELECT COUNT(DISTINCT date) FROM habit_completions WHERE habit_id = $1 AND user_id = $2",
 		habitID, userID,
 	).Scan(&n)
 	return n, err
