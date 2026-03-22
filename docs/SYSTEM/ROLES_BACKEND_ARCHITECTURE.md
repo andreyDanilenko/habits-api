@@ -1,5 +1,9 @@
 # Архитектура ролей на бэкенде
 
+**Навигация по всем документам SYSTEM:** [README.md](./README.md).
+
+См. также полный обзор с **data scope**, таблицей `role_object_scopes` и цепочкой middleware: [ROLES_PERMISSIONS_AND_DATA_SCOPE.md](./ROLES_PERMISSIONS_AND_DATA_SCOPE.md). Полная модель прав и API: [PERMISSIONS/README_PERMISSIONS_ROLES.md](./PERMISSIONS/README_PERMISSIONS_ROLES.md).
+
 ## 1. Обзор
 
 Система ролей обеспечивает гибкое управление доступом внутри workspace. Поддерживаются системные роли (OWNER, ADMIN, MEMBER, GUEST) и кастомные роли с произвольным набором прав.
@@ -18,6 +22,7 @@
 | `permission_catalog` | Справочник всех возможных прав `(module_code, entity_type, action)` |
 | `user_permissions` | Индивидуальные права пользователя (минуя роли) |
 | `role_inheritance` | Наследование ролей: child ← parent |
+| `role_object_scopes` | Видимость данных по роли: `(role_id, object_key, data_scope)` — см. [ROLES_PERMISSIONS_AND_DATA_SCOPE.md](./ROLES_PERMISSIONS_AND_DATA_SCOPE.md) |
 | `casbin_rule` | Политики Casbin: `p(role, workspace, obj, act)` и `g(user, role, workspace)` |
 
 ### 2.2. Связи

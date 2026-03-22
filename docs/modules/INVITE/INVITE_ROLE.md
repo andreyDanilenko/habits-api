@@ -21,7 +21,7 @@
 
 ### 1.1. Текущая ситуация
 
-У нас полностью реализована система управления ролями и правами доступа (см. `TOTAL_STATE_ROLE.v1`):
+У нас полностью реализована система управления ролями и правами доступа (см. [SYSTEM/PERMISSIONS/README_PERMISSIONS_ROLES.md](../../SYSTEM/PERMISSIONS/README_PERMISSIONS_ROLES.md); чеклист на момент внедрения — [SYSTEM/_archive/TOTAL_STATE_ROLE.v1.md](../../SYSTEM/_archive/TOTAL_STATE_ROLE.v1.md)):
 
 - ✅ Гранулярные права вида `модуль:сущность:действие`
 - ✅ Кастомные роли с наследованием

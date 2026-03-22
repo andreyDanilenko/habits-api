@@ -2,13 +2,13 @@
 
 **Версия:** 1.0  
 **Дата:** Март 2026  
-**Связь:** [PERMISSIONS_FRONTEND.v1.md](./PERMISSIONS_FRONTEND.v1.md) — общий план и модель данных.
+**Связь:** [PERMISSIONS_FRONTEND.v1.md](../_archive/PERMISSIONS_FRONTEND.v1.md) — архивный системный анализ и целевое состояние; операционный обзор — [README_PERMISSIONS_ROLES.md](./README_PERMISSIONS_ROLES.md).
 
 ---
 
 ## 1. Цели документа
 
-- **Зафиксировать фактическую реализацию** бэкенда ролей и прав (согласованную с `PERMISSIONS_FRONTEND.v1.md` и `perrmissions.v2.md`).
+- **Зафиксировать фактическую реализацию** бэкенда ролей и прав (согласованную с [PERMISSIONS_FRONTEND.v1.md](../_archive/PERMISSIONS_FRONTEND.v1.md) и [perrmissions.v2.md](../_archive/perrmissions.v2.md)).
 - **Дать фронтенду стабильный контракт**: какие сущности есть, как они связаны, какие есть эндпоинты и что они возвращают.
 - **Описать поведение Casbin и middleware**: от HTTP‑запроса до решения allow/deny.
 - **Строгая спецификация** для масштабирования, отката и возможного разбиения на сервисы.
@@ -19,7 +19,7 @@
 
 ### 2.1. Таблицы и Go‑модели
 
-Основные таблицы прав (см. миграции и `perrmissions.v2.md`):
+Основные таблицы прав (см. миграции и [perrmissions.v2.md](../_archive/perrmissions.v2.md)):
 
 - `permission_catalog` → `model.PermissionCatalogItem`  
   Словарь всех возможных прав в формате `module_code` + `entity_type` + `action`.  
@@ -263,7 +263,7 @@ m = g(r.sub, p.sub, r.dom) && r.dom == p.dom && r.obj == p.obj && r.act == p.act
   - `GET /api/v1/me/permissions?workspaceId=...`  
     → JSON: `{ permissions: string[], roles: string[], systemRole: 'OWNER'|'ADMIN'|'MEMBER'|'GUEST' }`.
 
-Фронтенд может трактовать эти данные ровно как описано в `PERMISSIONS_FRONTEND.v1.md`: `permissions[]` — полный набор строк `module:entity:action`, `roles[]` — имена ролей в workspace, `systemRole` — системная роль статуса участника.
+Фронтенд может трактовать эти данные ровно как описано в [README_PERMISSIONS_ROLES.md](./README_PERMISSIONS_ROLES.md) (и в архиве [PERMISSIONS_FRONTEND.v1.md](../_archive/PERMISSIONS_FRONTEND.v1.md)): `permissions[]` — полный набор строк `module:entity:action`, `roles[]` — имена ролей в workspace, `systemRole` — системная роль статуса участника.
 
 ---
 
@@ -312,14 +312,14 @@ m = g(r.sub, p.sub, r.dom) && r.dom == p.dom && r.obj == p.obj && r.act == p.act
 - **Индексы (обязательны):**  
   `user_role_assignments(user_id, workspace_id)`,  
   `user_permissions(user_id, workspace_id)`,  
-  `casbin_rule(ptype, v0, v1, v2, v3)` — согласно PERMISSIONS_FRONTEND.v1.md.
+  `casbin_rule(ptype, v0, v1, v2, v3)` — согласно README и архивному PERMISSIONS_FRONTEND.v1.
 - **Целевое время проверки прав:** < 5 мс (замер по перцентилям p95).
 - При росте таблицы `casbin_rule` (> 100k строк) рассмотреть партиционирование по `v1` (domain/workspace_id) или вынос политик в отдельное хранилище с кэшем.
 
 #### 2.2.3. Масштабирование по нагрузке
 
 - **Чтение каталога прав:** `GET /permissions/catalog` — редко меняется; допускается кэш на уровне приложения или HTTP (Cache-Control).
-- **Чтение «мои права»:** `GET /me/permissions?workspaceId=...` — частый запрос; кэширование на фронте (как в PERMISSIONS_FRONTEND.v1.md) + на бэке TTL-кэш с инвалидацией при изменении назначений/прав.
+- **Чтение «мои права»:** `GET /me/permissions?workspaceId=...` — частый запрос; кэширование на фронте (см. README) + на бэке TTL-кэш с инвалидацией при изменении назначений/прав.
 
 ---
 
@@ -384,7 +384,7 @@ m = g(r.sub, p.sub, r.dom) && r.dom == p.dom && r.obj == p.obj && r.act == p.act
 - [ ] Документированы шаги масштабирования API (несколько инстансов) и поведение кэша политик/прав.
 - [ ] Описаны процедуры отката релиза и отката при сбое Casbin; есть скрипты отката миграций.
 - [ ] Перечислены кандидаты на вынос в сервисы и зависимости между ними.
-- [ ] Сохранена совместимость с [PERMISSIONS_FRONTEND.v1.md](./PERMISSIONS_FRONTEND.v1.md) (модель данных, форматы прав, цели внедрения).
+- [ ] Сохранена совместимость с [PERMISSIONS_FRONTEND.v1.md](../_archive/PERMISSIONS_FRONTEND.v1.md) и [README_PERMISSIONS_ROLES.md](./README_PERMISSIONS_ROLES.md) (модель данных, форматы прав, цели внедрения).
 
 ---
 

@@ -2,7 +2,7 @@
 
 **Дата:** Март 2026  
 **Файл:** `PERMISSION_REPORT.PART_TOTAL.md`  
-**Основания:** `perrmissions.v2.md`, `PERMISSIONS_FRONTEND.v1.md/v2.md`, `PERMISSION_REPORT.PART_1/2/3.md`, `SPEC_ROLE_BACK.md`, `DOC_ALL_METHODS_BACK.md`
+**Основания:** спецификации и поэтапные отчёты в [`_archive/`](./_archive/README.md) (`perrmissions.v2.md`, `PERMISSIONS_FRONTEND.v1.md`, `PERMISSION_REPORT.PART_1/2/3.md`), а также [`PERMISSIONS/SPEC_ROLE_BACK.md`](./PERMISSIONS/SPEC_ROLE_BACK.md), `DOC_ALL_METHODS_BACK.md`. Неформальное ревью: `_archive/PERMISSIONS_FRONTEND.v2_REVIEW_CHAT.md`.
 
 ---
 
@@ -27,7 +27,7 @@
 
 ### 2.1. Новые таблицы (000022_permissions_schema_and_seed)
 
-Созданы таблицы (см. `perrmissions.v2.md` и PART_1):
+Созданы таблицы (см. `_archive/perrmissions.v2.md` и `_archive/PERMISSION_REPORT.PART_1.md`):
 
 1. `permission_catalog` — каталог всех возможных прав:
    - поля: `id`, `module_code`, `entity_type`, `action`, `name`, `description`, `is_system`, `created_at`;
@@ -223,7 +223,7 @@
 
 ## 5. Итоговая архитектура ролей и прав
 
-В результате всех этапов сложилась следующая картина (см. также `SPEC_ROLE_BACK.md` и `PERMISSIONS_FRONTEND.v1.md`):
+В результате всех этапов сложилась следующая картина (см. также [`PERMISSIONS/SPEC_ROLE_BACK.md`](./PERMISSIONS/SPEC_ROLE_BACK.md), [`PERMISSIONS/README_PERMISSIONS_ROLES.md`](./PERMISSIONS/README_PERMISSIONS_ROLES.md) и при необходимости `_archive/PERMISSIONS_FRONTEND.v1.md`):
 
 1. **Данные:**
    - Полный словарь прав (`permission_catalog`) с понятными кодами для фронта.
@@ -270,7 +270,7 @@
 4. **Кэширование эффективных прав:**
    - TTL‑кэш для результатов `GetEffectivePermissions(userID, workspaceID)` на бэкенде;
    - инвалидация при изменении ролей/назначений/индивидуальных прав;
-   - фронтовое кэширование уже предусмотрено в `PERMISSIONS_FRONTEND.v1.md`.
+   - фронтовое кэширование уже предусмотрено в `_archive/PERMISSIONS_FRONTEND.v1.md` и в [`PERMISSIONS/README_PERMISSIONS_ROLES.md`](./PERMISSIONS/README_PERMISSIONS_ROLES.md).
 
 ---
 

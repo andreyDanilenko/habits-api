@@ -1,5 +1,7 @@
 ## Обзор системы прав и ролей
 
+**Индекс всей папки SYSTEM:** [../README.md](../README.md) · **data scope (видимость строк):** [../ROLES_PERMISSIONS_AND_DATA_SCOPE.md](../ROLES_PERMISSIONS_AND_DATA_SCOPE.md).
+
 **Цель документа** — дать разработчикам и администраторам workspace одно место, где полностью описано:
 
 - **как устроены права (`permissions`) и роли** на бэкенде и фронтенде;
@@ -10,8 +12,8 @@
 
 Документ опирается на спецификации:
 
-- `PERMISSIONS_FRONTEND.v1.md` — системный анализ и целевое состояние;
-- `SPEC_ROLE_BACK.md` — подробная спецификация реализации бэкенда ролей и прав;
+- [`SPEC_ROLE_BACK.md`](./SPEC_ROLE_BACK.md) — спецификация реализации бэкенда ролей и прав;
+- при необходимости глубины: [длинный системный анализ (архив)](../_archive/PERMISSIONS_FRONTEND.v1.md), [постановки и отчёты по этапам](../_archive/README.md);
 - код бэкенда в `internal/service/permission`, `internal/authz/casbin.go`, `internal/middleware/*`;
 - код фронтенда в `src/features/permissions`, `src/features/roles`, `src/features/user-permissions`, `src/features/auth`.
 
@@ -638,7 +640,7 @@ Casbin‑matcher учитывает эти группировки, поэтом�
 
 ## HTTP‑API и связь с фронтендом
 
-Ключевые эндпоинты (см. также `DOC_ALL_METHODS_BACK.md` и `PERMISSIONS_FRONTEND.v1.md`):
+Ключевые эндпоинты (см. также `DOC_ALL_METHODS_BACK.md` и при необходимости [архивный анализ фронта](../_archive/PERMISSIONS_FRONTEND.v1.md)):
 
 - **Каталог прав**:
   - `GET /api/v1/workspaces/:workspaceId/permissions/catalog`

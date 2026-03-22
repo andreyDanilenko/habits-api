@@ -1,6 +1,6 @@
 -- =============================================================================
 -- ФИНАЛЬНАЯ МИГРАЦИЯ (PRODUCTION-READY)
--- Создает все таблицы в их текущем состоянии
+-- Создаёт все таблицы в актуальном состоянии (сводка миграций 000001–000029).
 -- =============================================================================
 
 -- =====================================================
@@ -30,6 +30,8 @@ CREATE TABLE users (
     name VARCHAR(100),
     role VARCHAR(20) NOT NULL DEFAULT 'USER',
     avatar_url TEXT,
+    position VARCHAR(200),
+    department_id UUID,
     status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
@@ -37,6 +39,7 @@ CREATE TABLE users (
 
 CREATE INDEX idx_users_email ON users(email);
 CREATE INDEX idx_users_status ON users(status);
+CREATE INDEX idx_users_department_id ON users(department_id) WHERE department_id IS NOT NULL;
 
 CREATE TABLE registration_tokens (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -196,8 +199,7 @@ CREATE TABLE habit_completions (
     notes TEXT,
     rating INTEGER CHECK (rating >= 1 AND rating <= 5),
     time TIME,
-    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    UNIQUE(habit_id, date, user_id)
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX idx_completions_habit_id ON habit_completions(habit_id);
@@ -676,6 +678,20 @@ CREATE TABLE workspace_roles (
 );
 
 CREATE INDEX idx_workspace_roles_workspace ON workspace_roles(workspace_id);
+
+-- Data scope по роли и объекту (ABAC-слой поверх Casbin; миграция 000029).
+-- object_key как у Casbin: crm:deal, crm:contact, ...
+CREATE TABLE role_object_scopes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    role_id UUID NOT NULL REFERENCES workspace_roles(id) ON DELETE CASCADE,
+    object_key VARCHAR(128) NOT NULL,
+    data_scope VARCHAR(32) NOT NULL CHECK (data_scope IN ('all', 'owner', 'department', 'none')),
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    UNIQUE(role_id, object_key)
+);
+
+CREATE INDEX idx_role_object_scopes_role ON role_object_scopes(role_id);
 
 CREATE TABLE user_role_assignments (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
