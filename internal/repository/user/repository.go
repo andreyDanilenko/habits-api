@@ -22,6 +22,8 @@ type UserRepository interface {
 	Unban(ctx context.Context, id string) error
 	ListAll(ctx context.Context) ([]model.User, error)
 	ListAllIncludingDeleted(ctx context.Context) ([]model.User, error)
+	// GetDepartmentID возвращает users.department_id (если не NULL).
+	GetDepartmentID(ctx context.Context, userID string) (departmentID string, ok bool, err error)
 }
 type PostgresUserRepository struct {
 	db *sql.DB
@@ -399,6 +401,24 @@ func (r *PostgresUserRepository) HardDelete(ctx context.Context, id string) erro
 		return sql.ErrNoRows
 	}
 	return tx.Commit()
+}
+
+// GetDepartmentID возвращает users.department_id для активного пользователя.
+func (r *PostgresUserRepository) GetDepartmentID(ctx context.Context, userID string) (string, bool, error) {
+	var d sql.NullString
+	err := r.db.QueryRowContext(ctx, `
+		SELECT department_id FROM users WHERE id = $1 AND status = 'ACTIVE'
+	`, userID).Scan(&d)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("get department_id: %w", err)
+	}
+	if !d.Valid || d.String == "" {
+		return "", false, nil
+	}
+	return d.String, true, nil
 }
 
 // Ban устанавливает status = BANNED. Пользователь не сможет войти.

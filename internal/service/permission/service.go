@@ -14,20 +14,27 @@ import (
 )
 
 var (
-	ErrRoleSystem      = errors.New("cannot modify or delete system role")
-	ErrInvalidPermForm = errors.New("permission must be format module:entity:action")
+	ErrRoleSystem               = errors.New("cannot modify or delete system role")
+	ErrInvalidPermForm          = errors.New("permission must be format module:entity:action")
+	ErrProtectedRoleObjectScopes = errors.New("object scopes cannot be changed for the OWNER role")
 )
 
 const defaultRoleOnDelete = "GUEST"
 
-type Service struct {
-	repo         *permRepo.Repository
-	workspaceRepo *workspaceRepo.Repository
-	enforcer     *casbin.Enforcer
+// userDepartmentGetter — department_id для уведомлений и /me/permissions.
+type userDepartmentGetter interface {
+	GetDepartmentID(ctx context.Context, userID string) (departmentID string, ok bool, err error)
 }
 
-func NewService(repo *permRepo.Repository, enforcer *casbin.Enforcer, workspaceRepo *workspaceRepo.Repository) *Service {
-	return &Service{repo: repo, workspaceRepo: workspaceRepo, enforcer: enforcer}
+type Service struct {
+	repo          *permRepo.Repository
+	workspaceRepo *workspaceRepo.Repository
+	enforcer      *casbin.Enforcer
+	userDept      userDepartmentGetter
+}
+
+func NewService(repo *permRepo.Repository, enforcer *casbin.Enforcer, workspaceRepo *workspaceRepo.Repository, userDept userDepartmentGetter) *Service {
+	return &Service{repo: repo, workspaceRepo: workspaceRepo, enforcer: enforcer, userDept: userDept}
 }
 
 // GetCatalog возвращает каталог прав для UI.

@@ -31,3 +31,9 @@ type WorkspaceMember struct {
 	JoinedAt   string  `json:"joinedAt"`
 	AvatarURL  *string `json:"avatarUrl,omitempty"`
 }
+
+// WorkspaceMemberFanout — участник для внутренней рассылки (realtime), не API.
+type WorkspaceMemberFanout struct {
+	UserID     string
+	GlobalRole UserRole
+}

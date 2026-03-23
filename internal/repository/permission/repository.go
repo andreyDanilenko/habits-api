@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"backend/internal/model"
@@ -484,4 +485,51 @@ func (r *Repository) DeleteRoleInheritance(ctx context.Context, workspaceID, chi
 		return ErrRoleNotFound
 	}
 	return nil
+}
+
+// ListRoleObjectScopes возвращает все пары object_key → data_scope для роли.
+func (r *Repository) ListRoleObjectScopes(ctx context.Context, roleID string) ([]model.RoleObjectScope, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT object_key, data_scope FROM role_object_scopes WHERE role_id = $1 ORDER BY object_key
+	`, roleID)
+	if err != nil {
+		return nil, fmt.Errorf("list role object scopes: %w", err)
+	}
+	defer rows.Close()
+	var list []model.RoleObjectScope
+	for rows.Next() {
+		var row model.RoleObjectScope
+		if err := rows.Scan(&row.ObjectKey, &row.DataScope); err != nil {
+			return nil, err
+		}
+		list = append(list, row)
+	}
+	return list, rows.Err()
+}
+
+// ReplaceRoleObjectScopes полностью заменяет набор scope для роли (пустая map — удаляет все).
+func (r *Repository) ReplaceRoleObjectScopes(ctx context.Context, roleID string, scopes map[string]string) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM role_object_scopes WHERE role_id = $1`, roleID); err != nil {
+		return fmt.Errorf("delete role object scopes: %w", err)
+	}
+	for objectKey, dataScope := range scopes {
+		objectKey = strings.TrimSpace(objectKey)
+		if objectKey == "" {
+			continue
+		}
+		id := uuid.New().String()
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO role_object_scopes (id, role_id, object_key, data_scope, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, NOW(), NOW())
+		`, id, roleID, objectKey, dataScope)
+		if err != nil {
+			return fmt.Errorf("insert role object scope: %w", err)
+		}
+	}
+	return tx.Commit()
 }

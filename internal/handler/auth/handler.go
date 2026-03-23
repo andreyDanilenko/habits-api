@@ -1,8 +1,10 @@
 package auth
 
 import (
+	"context"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,11 +15,15 @@ import (
 	authService "backend/internal/service/auth"
 	"backend/pkg/http/cookies"
 	"backend/pkg/response"
+	telegramPort "backend/pkg/telegram"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 )
+
+// maxAvatarUploadBytes — лимит на сервере (ниже client_max_body_size в nginx, обычно 25m).
+const maxAvatarUploadBytes = 10 << 20 // 10 MiB
 
 func (h *Handler) RegisterRoutes(r *gin.RouterGroup) {
 	h.RegisterPublicRoutes(r)
@@ -79,6 +85,7 @@ type Handler struct {
 	validate      *validator.Validate
 	responder     *response.Responder
 	uploadsDir    string
+	telegramSender telegramPort.Sender
 }
 
 func NewHandler(
@@ -87,6 +94,7 @@ func NewHandler(
 	responder *response.Responder,
 	validate *validator.Validate,
 	uploadsDir string,
+	telegramSender telegramPort.Sender,
 ) *Handler {
 	if uploadsDir == "" {
 		uploadsDir = "./uploads"
@@ -97,6 +105,7 @@ func NewHandler(
 		validate:      validate,
 		responder:     responder,
 		uploadsDir:    uploadsDir,
+		telegramSender: telegramSender,
 	}
 }
 
@@ -118,11 +127,47 @@ func (h *Handler) Login(c *gin.Context) {
 	if err != nil {
 		switch err {
 		case authService.ErrInvalidCredentials:
+			if h.telegramSender != nil {
+				msg := fmt.Sprintf(
+					"❌ Неуспешный логин\n📧 Email: %s\nПричина: Неверный email или пароль",
+					req.Email,
+				)
+				go func() {
+					if sendErr := h.telegramSender.SendMessage(context.Background(), msg); sendErr != nil {
+						log.Printf("[telegram] login send failed: %v", sendErr)
+					}
+				}()
+			}
 			h.responder.Unauthorized(c, "Invalid email or password")
 		default:
+			if h.telegramSender != nil {
+				msg := fmt.Sprintf(
+					"❌ Неуспешный логин (ошибка)\n📧 Email: %s",
+					req.Email,
+				)
+				go func() {
+					if sendErr := h.telegramSender.SendMessage(context.Background(), msg); sendErr != nil {
+						log.Printf("[telegram] login send failed: %v", sendErr)
+					}
+				}()
+			}
 			h.responder.InternalServerError(c, "Internal server error")
 		}
 		return
+	}
+
+	if h.telegramSender != nil {
+		msg := fmt.Sprintf(
+			"✅ Успешный логин\n📧 Email: %s\n🆔 ID: %s\n👤 Role: %s",
+			loginResp.User.Email,
+			loginResp.User.ID,
+			loginResp.User.Role,
+		)
+		go func() {
+			if sendErr := h.telegramSender.SendMessage(context.Background(), msg); sendErr != nil {
+				log.Printf("[telegram] login send failed: %v", sendErr)
+			}
+		}()
 	}
 	accessExpiresAt := time.Now().Add(time.Duration(loginResp.ExpiresIn) * time.Second)
 	h.cookieManager.SetToken(c.Writer, "access_token", loginResp.AccessToken, accessExpiresAt)
@@ -209,6 +254,21 @@ func (h *Handler) Register(c *gin.Context) {
 	}
 
 	if out.LoginResponse != nil {
+		if h.telegramSender != nil {
+			user := out.LoginResponse.User
+			msg := fmt.Sprintf(
+				"✅ Реактивация/авторизация после регистрации\n📧 Email: %s\n🆔 ID: %s\n👤 Role: %s",
+				user.Email,
+				user.ID,
+				user.Role,
+			)
+			go func() {
+				if sendErr := h.telegramSender.SendMessage(context.Background(), msg); sendErr != nil {
+					log.Printf("[telegram] register (reactivation) send failed: %v", sendErr)
+				}
+			}()
+		}
+
 		// Реактивация удалённого пользователя — сразу логин
 		accessExpiresAt := time.Now().Add(time.Duration(out.LoginResponse.ExpiresIn) * time.Second)
 		h.cookieManager.SetToken(c.Writer, "access_token", out.LoginResponse.AccessToken, accessExpiresAt)
@@ -222,6 +282,23 @@ func (h *Handler) Register(c *gin.Context) {
 	}
 
 	// Ожидание подтверждения email
+	if h.telegramSender != nil {
+		name := strings.TrimSpace(req.Name)
+		if name == "" {
+			name = "—"
+		}
+		msg := fmt.Sprintf(
+			"🔔 Новый запрос на регистрацию\n📧 Email: %s\n👤 Name: %s\n📝 %s",
+			req.Email,
+			name,
+			out.Message,
+		)
+		go func() {
+			if sendErr := h.telegramSender.SendMessage(context.Background(), msg); sendErr != nil {
+				log.Printf("[telegram] register request send failed: %v", sendErr)
+			}
+		}()
+	}
 	h.responder.Created(c, out.Message, gin.H{"message": out.Message})
 }
 
@@ -293,6 +370,10 @@ func (h *Handler) UploadAvatar(c *gin.Context) {
 	file, err := c.FormFile("file")
 	if err != nil {
 		h.responder.BadRequest(c, "File required")
+		return
+	}
+	if file.Size > maxAvatarUploadBytes {
+		h.responder.BadRequest(c, "Image too large (max 10 MB)")
 		return
 	}
 
@@ -420,6 +501,21 @@ func (h *Handler) VerifyEmail(c *gin.Context) {
 	h.cookieManager.SetToken(c.Writer, "access_token", resp.AccessToken, accessExpiresAt)
 	refreshExpiresAt := time.Now().Add(30 * 24 * time.Hour)
 	h.cookieManager.SetToken(c.Writer, "refresh_token", resp.RefreshToken, refreshExpiresAt)
+
+	if h.telegramSender != nil {
+		user := resp.User
+		msg := fmt.Sprintf(
+			"✅ Пользователь зарегистрирован и выполнен логин\n📧 Email: %s\n🆔 ID: %s\n👤 Role: %s",
+			user.Email,
+			user.ID,
+			user.Role,
+		)
+		go func() {
+			if sendErr := h.telegramSender.SendMessage(context.Background(), msg); sendErr != nil {
+				log.Printf("[telegram] verify-email send failed: %v", sendErr)
+			}
+		}()
+	}
 
 	h.responder.SuccessWithData(c, gin.H{
 		"user":       h.withAvatarURL(resp.User),

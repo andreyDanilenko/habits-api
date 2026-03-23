@@ -30,6 +30,15 @@ func NewHandler(svc *crmService.Service, wsSvc *workspaceService.Service, respon
 	return &Handler{svc: svc, wsSvc: wsSvc, responder: responder, validate: validate}
 }
 
+// skipDealDataScope — глобальный ADMIN видит все сделки без role_object_scopes.
+func (h *Handler) skipDealDataScope(c *gin.Context) bool {
+	roleVal, _ := c.Get(middleware.GinRoleKey)
+	if roleVal == nil {
+		return false
+	}
+	return roleVal.(model.UserRole) == model.UserRoleAdmin
+}
+
 func (h *Handler) requireWorkspaceAccess(c *gin.Context) (workspaceID, userID string, ok bool) {
 	userID, ok = middleware.GetUserIDFromGin(c)
 	if !ok {
@@ -710,7 +719,7 @@ func (h *Handler) StageReorder(c *gin.Context) {
 
 // Deals
 func (h *Handler) DealList(c *gin.Context) {
-	workspaceID, _, ok := h.requireWorkspaceAccess(c)
+	workspaceID, userID, ok := h.requireWorkspaceAccess(c)
 	if !ok {
 		return
 	}
@@ -728,7 +737,7 @@ func (h *Handler) DealList(c *gin.Context) {
 		SortBy:     c.Query("sortBy"),
 		SortOrder:  c.Query("sortOrder"),
 	}
-	list, total, err := h.svc.DealList(c.Request.Context(), workspaceID, opts)
+	list, total, err := h.svc.DealList(c.Request.Context(), workspaceID, userID, h.skipDealDataScope(c), opts)
 	if err != nil {
 		h.responder.InternalServerError(c, "Failed to list deals")
 		return
@@ -737,12 +746,12 @@ func (h *Handler) DealList(c *gin.Context) {
 }
 
 func (h *Handler) DealGet(c *gin.Context) {
-	workspaceID, _, ok := h.requireWorkspaceAccess(c)
+	workspaceID, userID, ok := h.requireWorkspaceAccess(c)
 	if !ok {
 		return
 	}
 	id := c.Param("id")
-	deal, err := h.svc.DealGet(c.Request.Context(), workspaceID, id)
+	deal, err := h.svc.DealGet(c.Request.Context(), workspaceID, id, userID, h.skipDealDataScope(c))
 	if err != nil {
 		h.responder.InternalServerError(c, "Failed to get deal")
 		return
@@ -790,7 +799,7 @@ func (h *Handler) DealUpdate(c *gin.Context) {
 		return
 	}
 	id := c.Param("id")
-	existing, err := h.svc.DealGet(c.Request.Context(), workspaceID, id)
+	existing, err := h.svc.DealGet(c.Request.Context(), workspaceID, id, userID, h.skipDealDataScope(c))
 	if err != nil || existing == nil {
 		h.responder.NotFound(c, "Deal not found")
 		return
@@ -802,7 +811,7 @@ func (h *Handler) DealUpdate(c *gin.Context) {
 	}
 	mergeDeal(existing, &req)
 	existing.ID = id
-	if err := h.svc.DealUpdate(c.Request.Context(), workspaceID, existing, userID); err != nil {
+	if err := h.svc.DealUpdate(c.Request.Context(), workspaceID, existing, userID, h.skipDealDataScope(c)); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			h.responder.NotFound(c, "Deal not found")
 			return
@@ -810,7 +819,7 @@ func (h *Handler) DealUpdate(c *gin.Context) {
 		h.responder.InternalServerError(c, "Failed to update deal")
 		return
 	}
-	updated, _ := h.svc.DealGet(c.Request.Context(), workspaceID, id)
+	updated, _ := h.svc.DealGet(c.Request.Context(), workspaceID, id, userID, h.skipDealDataScope(c))
 	h.responder.SuccessWithData(c, updated)
 }
 
@@ -866,12 +875,12 @@ func mergeDeal(dst, src *model.Deal) {
 }
 
 func (h *Handler) DealDelete(c *gin.Context) {
-	workspaceID, _, ok := h.requireWorkspaceAccess(c)
+	workspaceID, userID, ok := h.requireWorkspaceAccess(c)
 	if !ok {
 		return
 	}
 	id := c.Param("id")
-	if err := h.svc.DealDelete(c.Request.Context(), workspaceID, id); err != nil {
+	if err := h.svc.DealDelete(c.Request.Context(), workspaceID, id, userID, h.skipDealDataScope(c)); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			h.responder.NotFound(c, "Deal not found")
 			return

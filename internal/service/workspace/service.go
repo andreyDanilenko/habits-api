@@ -400,6 +400,15 @@ func (s *Service) ListMembers(ctx context.Context, workspaceID, userID string, u
 	return s.repo.ListMembers(ctx, wsID)
 }
 
+// ListMembersForFanout — участники workspace с глобальной ролью; только для доверенного внутреннего кода (не HTTP).
+func (s *Service) ListMembersForFanout(ctx context.Context, workspaceID string) ([]model.WorkspaceMemberFanout, error) {
+	wsID, err := uuid.Parse(workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	return s.repo.ListMembersForFanout(ctx, wsID)
+}
+
 // RemoveMember удаляет участника из workspace. Только OWNER/ADMIN.
 func (s *Service) RemoveMember(ctx context.Context, workspaceID, userID, targetUserID string, userRole model.UserRole) error {
 	wsID, err := uuid.Parse(workspaceID)

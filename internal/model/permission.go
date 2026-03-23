@@ -54,6 +54,12 @@ type UserPermission struct {
 	PermissionStr string `json:"permission" db:"-"`
 }
 
+// RoleObjectScope — видимость данных по роли для объекта (ключ как у Casbin: crm:deal).
+type RoleObjectScope struct {
+	ObjectKey  string `json:"objectKey" db:"object_key"`
+	DataScope  string `json:"dataScope" db:"data_scope"`
+}
+
 // RoleInheritance описывает отношение наследования ролей в рамках одного workspace.
 // childRole наследует права parentRole.
 type RoleInheritance struct {

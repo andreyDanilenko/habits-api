@@ -4,11 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log"
 	"time"
 
 	"backend/internal/model"
 	crmRepo "backend/internal/repository/crm"
 	userRepo "backend/internal/repository/user"
+	permissionService "backend/internal/service/permission"
 	workspaceService "backend/internal/service/workspace"
 	"backend/pkg/realtime"
 
@@ -29,24 +31,125 @@ type Service struct {
 	wsSvc     *workspaceService.Service
 	userRepo  *userRepo.PostgresUserRepository
 	publisher realtime.Publisher
+	perm      *permissionService.Service
 }
 
-func NewService(repo *crmRepo.Repository, wsSvc *workspaceService.Service, userRepo *userRepo.PostgresUserRepository, publisher realtime.Publisher) *Service {
+func NewService(repo *crmRepo.Repository, wsSvc *workspaceService.Service, userRepo *userRepo.PostgresUserRepository, publisher realtime.Publisher, perm *permissionService.Service) *Service {
 	if publisher == nil {
 		publisher = realtime.NoopPublisher{}
 	}
-	return &Service{repo: repo, wsSvc: wsSvc, userRepo: userRepo, publisher: publisher}
+	return &Service{repo: repo, wsSvc: wsSvc, userRepo: userRepo, publisher: publisher, perm: perm}
 }
 
-func (s *Service) emitDealEvent(ctx context.Context, workspaceID, eventType string, payload map[string]interface{}) {
-	ch := realtime.WorkspaceChannel(workspaceID)
-	event := realtime.Event{
-		EventType: eventType,
-		Target:    realtime.Target{Type: "workspace", ID: workspaceID},
-		Payload:   payload,
-		Timestamp: time.Now().UnixMilli(),
+func (s *Service) dealVisibleForActor(ctx context.Context, workspaceID, actorUserID string, skipDataScope bool, deal *model.Deal) (bool, error) {
+	if skipDataScope || s.perm == nil || deal == nil {
+		return true, nil
 	}
-	_ = s.publisher.Publish(ctx, ch, event)
+	scope, err := s.perm.GetEffectiveDataScope(ctx, actorUserID, workspaceID, "crm:deal")
+	if err != nil {
+		return false, err
+	}
+	switch scope {
+	case permissionService.DataScopeAll:
+		return true, nil
+	case permissionService.DataScopeNone:
+		return false, nil
+	case permissionService.DataScopeOwner:
+		return deal.OwnerID == actorUserID, nil
+	case permissionService.DataScopeDepartment:
+		return s.repo.DealDepartmentPeersWithOwner(ctx, actorUserID, deal.OwnerID)
+	default:
+		return true, nil
+	}
+}
+
+func (s *Service) attachDealOwnerMeta(ctx context.Context, payload map[string]interface{}) {
+	var ownerID string
+	switch v := payload["deal"].(type) {
+	case *model.Deal:
+		if v != nil {
+			ownerID = v.OwnerID
+		}
+	case map[string]interface{}:
+		if oid, ok := v["ownerId"].(string); ok {
+			ownerID = oid
+		}
+	}
+	if ownerID == "" {
+		if oid, ok := payload["dealOwnerId"].(string); ok {
+			ownerID = oid
+		}
+	}
+	if ownerID == "" {
+		return
+	}
+	payload["dealOwnerId"] = ownerID
+	dept, ok, err := s.userRepo.GetDepartmentID(ctx, ownerID)
+	if err != nil || !ok {
+		return
+	}
+	payload["dealOwnerDepartmentId"] = dept
+}
+
+// dealStubForDataScope — минимальные поля сделки для проверки видимости (в т.ч. delete только с dealOwnerId).
+func dealStubForDataScope(payload map[string]interface{}) *model.Deal {
+	if d, ok := payload["deal"].(*model.Deal); ok && d != nil {
+		return d
+	}
+	if m, ok := payload["deal"].(map[string]interface{}); ok {
+		var d model.Deal
+		if id, ok := m["id"].(string); ok {
+			d.ID = id
+		}
+		if oid, ok := m["ownerId"].(string); ok {
+			d.OwnerID = oid
+		}
+		if d.OwnerID == "" {
+			if oid, ok := payload["dealOwnerId"].(string); ok {
+				d.OwnerID = oid
+			}
+		}
+		return &d
+	}
+	if oid, ok := payload["dealOwnerId"].(string); ok && oid != "" {
+		return &model.Deal{OwnerID: oid}
+	}
+	return nil
+}
+
+// emitDealEvent шлёт realtime только пользователям, которым сделка видна по data scope (и глобальным ADMIN — всё).
+// Канал ws:user:{id}; клиент уже в комнате user:{id} в satellite.
+func (s *Service) emitDealEvent(ctx context.Context, workspaceID, eventType string, payload map[string]interface{}) {
+	s.attachDealOwnerMeta(ctx, payload)
+	deal := dealStubForDataScope(payload)
+	if deal == nil || deal.OwnerID == "" {
+		return
+	}
+	members, err := s.wsSvc.ListMembersForFanout(ctx, workspaceID)
+	if err != nil {
+		log.Printf("crm emitDealEvent: ListMembersForFanout workspace=%s: %v", workspaceID, err)
+		return
+	}
+	if len(members) == 0 {
+		return
+	}
+	ts := time.Now().UnixMilli()
+	for _, m := range members {
+		skipScope := m.GlobalRole == model.UserRoleAdmin
+		ok, err := s.dealVisibleForActor(ctx, workspaceID, m.UserID, skipScope, deal)
+		if err != nil || !ok {
+			continue
+		}
+		// Пользовательские настройки уведомлений (mute / типы) — подключать здесь перед Publish.
+		ch := realtime.UserChannel(m.UserID)
+		event := realtime.Event{
+			EventType: eventType,
+			Target:    realtime.Target{Type: "user", ID: m.UserID},
+			Payload:   payload,
+			Timestamp: ts,
+		}
+		_ = s.publisher.Publish(ctx, ch, event)
+	}
 }
 
 func (s *Service) resolveUserName(ctx context.Context, userID string) string {
@@ -385,15 +488,33 @@ func (s *Service) StageReorder(ctx context.Context, workspaceID, pipelineID stri
 	return s.repo.StageReorder(ctx, pid, ids)
 }
 
-func (s *Service) DealList(ctx context.Context, workspaceID string, opts crmRepo.DealListOpts) ([]model.Deal, int, error) {
+func (s *Service) DealList(ctx context.Context, workspaceID, actorUserID string, skipDataScope bool, opts crmRepo.DealListOpts) ([]model.Deal, int, error) {
 	wsID, err := uuid.Parse(workspaceID)
 	if err != nil {
 		return nil, 0, err
 	}
+	if !skipDataScope && s.perm != nil {
+		scope, err := s.perm.GetEffectiveDataScope(ctx, actorUserID, workspaceID, "crm:deal")
+		if err != nil {
+			return nil, 0, err
+		}
+		switch scope {
+		case permissionService.DataScopeNone:
+			return []model.Deal{}, 0, nil
+		case permissionService.DataScopeOwner:
+			opts.DataScopeOwnerUserID = actorUserID
+			opts.OwnerID = ""
+		case permissionService.DataScopeDepartment:
+			opts.DataScopeDepartmentViewerID = actorUserID
+			opts.OwnerID = ""
+		case permissionService.DataScopeAll:
+			// только фильтры из запроса
+		}
+	}
 	return s.repo.DealList(ctx, wsID, opts)
 }
 
-func (s *Service) DealGet(ctx context.Context, workspaceID, id string) (*model.Deal, error) {
+func (s *Service) DealGet(ctx context.Context, workspaceID, id string, actorUserID string, skipDataScope bool) (*model.Deal, error) {
 	wsID, err := uuid.Parse(workspaceID)
 	if err != nil {
 		return nil, err
@@ -402,7 +523,18 @@ func (s *Service) DealGet(ctx context.Context, workspaceID, id string) (*model.D
 	if err != nil {
 		return nil, err
 	}
-	return s.repo.DealGet(ctx, uid, wsID)
+	deal, err := s.repo.DealGet(ctx, uid, wsID)
+	if err != nil || deal == nil {
+		return deal, err
+	}
+	ok, err := s.dealVisibleForActor(ctx, workspaceID, actorUserID, skipDataScope, deal)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, nil
+	}
+	return deal, nil
 }
 
 func (s *Service) DealCreate(ctx context.Context, workspaceID string, d *model.Deal, userID string) error {
@@ -442,8 +574,17 @@ func (s *Service) DealCreate(ctx context.Context, workspaceID string, d *model.D
 	return nil
 }
 
-func (s *Service) DealUpdate(ctx context.Context, workspaceID string, d *model.Deal, userID string) error {
+func (s *Service) DealUpdate(ctx context.Context, workspaceID string, d *model.Deal, userID string, skipDataScope bool) error {
 	oldDeal, _ := s.repo.DealGet(ctx, uuid.MustParse(d.ID), uuid.MustParse(workspaceID))
+	if oldDeal != nil {
+		ok, err := s.dealVisibleForActor(ctx, workspaceID, userID, skipDataScope, oldDeal)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return sql.ErrNoRows
+		}
+	}
 	if err := s.repo.DealUpdate(ctx, workspaceID, d); err != nil {
 		return err
 	}
@@ -489,14 +630,29 @@ func (s *Service) DealUpdate(ctx context.Context, workspaceID string, d *model.D
 	return nil
 }
 
-func (s *Service) DealDelete(ctx context.Context, workspaceID, id string) error {
+func (s *Service) DealDelete(ctx context.Context, workspaceID, id string, actorUserID string, skipDataScope bool) error {
 	wsID, _ := uuid.Parse(workspaceID)
 	uid, _ := uuid.Parse(id)
+	deal, err := s.repo.DealGet(ctx, uid, wsID)
+	if err != nil {
+		return err
+	}
+	if deal == nil {
+		return sql.ErrNoRows
+	}
+	ok, err := s.dealVisibleForActor(ctx, workspaceID, actorUserID, skipDataScope, deal)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return sql.ErrNoRows
+	}
 	if err := s.repo.DealDelete(ctx, uid, wsID); err != nil {
 		return err
 	}
 	s.emitDealEvent(ctx, workspaceID, realtime.EventDealDeleted, map[string]interface{}{
-		"dealId": id,
+		"dealId":      id,
+		"dealOwnerId": deal.OwnerID,
 	})
 	return nil
 }

@@ -25,12 +25,33 @@ type DealListOpts struct {
 	DateTo     string
 	SortBy     string
 	SortOrder  string
+	// Ограничение видимости (ставит CRM service по role_object_scopes).
+	DataScopeNone               bool
+	DataScopeOwnerUserID        string
+	DataScopeDepartmentViewerID string
 }
 
 func (r *Repository) DealList(ctx context.Context, workspaceID uuid.UUID, opts DealListOpts) ([]model.Deal, int, error) {
+	if opts.DataScopeNone {
+		return []model.Deal{}, 0, nil
+	}
 	base := `FROM crm_deals WHERE workspace_id = $1 AND deleted_at IS NULL`
 	args := []interface{}{workspaceID}
 	n := 2
+	if opts.DataScopeOwnerUserID != "" {
+		base += fmt.Sprintf(" AND owner_id = $%d::uuid", n)
+		args = append(args, opts.DataScopeOwnerUserID)
+		n++
+	}
+	if opts.DataScopeDepartmentViewerID != "" {
+		base += fmt.Sprintf(` AND (owner_id = $%d::uuid OR owner_id IN (
+			SELECT u.id FROM users u
+			WHERE u.department_id IS NOT NULL
+			  AND u.department_id = (SELECT v.department_id FROM users v WHERE v.id = $%d::uuid AND v.department_id IS NOT NULL)
+		))`, n, n)
+		args = append(args, opts.DataScopeDepartmentViewerID)
+		n++
+	}
 	if opts.PipelineID != "" {
 		base += fmt.Sprintf(" AND pipeline_id = $%d", n)
 		args = append(args, opts.PipelineID)
@@ -197,6 +218,27 @@ func scanDealRow(row interface {
 func (r *Repository) DealGet(ctx context.Context, id, workspaceID uuid.UUID) (*model.Deal, error) {
 	row := r.db.QueryRowContext(ctx, `SELECT id::text, workspace_id::text, name, contact_id::text, company_id::text, budget, currency, pipeline_id::text, stage_id::text, expected_close_date, actual_close_date, status, lost_reason, description, source, probability, tags, owner_id::text, created_at, updated_at FROM crm_deals WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL`, id, workspaceID)
 	return scanDealRow(row)
+}
+
+// DealDepartmentPeersWithOwner — владелец сделки в том же непустом department_id, что и viewer (или совпадает с viewer).
+func (r *Repository) DealDepartmentPeersWithOwner(ctx context.Context, viewerUserID, dealOwnerUserID string) (bool, error) {
+	if viewerUserID != "" && viewerUserID == dealOwnerUserID {
+		return true, nil
+	}
+	var ok bool
+	err := r.db.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM users v
+			JOIN users o ON o.id = $2::uuid
+			WHERE v.id = $1::uuid
+			  AND v.department_id IS NOT NULL
+			  AND o.department_id IS NOT NULL
+			  AND v.department_id = o.department_id
+		)`, viewerUserID, dealOwnerUserID).Scan(&ok)
+	if err != nil {
+		return false, err
+	}
+	return ok, nil
 }
 
 func (r *Repository) DealCreate(ctx context.Context, workspaceID string, d *model.Deal, userID string) error {

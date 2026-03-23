@@ -20,6 +20,7 @@ import (
 	swaggerHandler "backend/internal/handler/swagger"
 	workspaceHandler "backend/internal/handler/workspace"
 	"backend/internal/middleware"
+	telegramInfra "backend/internal/telegram"
 	activityRepo "backend/internal/repository/activity"
 	crmRepo "backend/internal/repository/crm"
 	habitsRepo "backend/internal/repository/habits"
@@ -56,6 +57,7 @@ import (
 	"backend/pkg/email"
 	"backend/pkg/http/cookies"
 	"backend/pkg/password"
+	telegramPort "backend/pkg/telegram"
 	"backend/pkg/realtime"
 	"backend/pkg/response"
 	"database/sql"
@@ -112,6 +114,7 @@ func NewContainer(db *sql.DB, gormDB *gorm.DB, cfg *config.Config) (*Container, 
 	workspaceRepository := workspaceRepo.NewRepository(db)
 	userPrefsRepository := userPrefsRepo.NewRepository(db)
 	licenseRepository := licenseRepo.NewRepository(db)
+	userRepository := userRepo.NewRepository(db)
 
 	// Permission (нужен для workspace Create — назначение OWNER при создании)
 	permissionRepository := permissionRepo.NewRepository(db)
@@ -119,14 +122,13 @@ func NewContainer(db *sql.DB, gormDB *gorm.DB, cfg *config.Config) (*Container, 
 	if err != nil {
 		return nil, err
 	}
-	permSvc := permissionService.NewService(permissionRepository, enforcer, workspaceRepository)
+	permSvc := permissionService.NewService(permissionRepository, enforcer, workspaceRepository, userRepository)
 	workspaceSvc := workspaceService.NewService(workspaceRepository, userPrefsRepository, licenseRepository, permSvc)
 
 	accessCache := cache.NewMemoryCache()
 	accessChecker := workspaceService.CachedAccessChecker(workspaceSvc, accessCache)
 
 	// Auth
-	userRepository := userRepo.NewRepository(db)
 	regTokenRepository := regTokenRepo.NewRepository(db)
 	tokenGen := token.NewGenerator(cfg.Auth.JWTSecretKey, cfg.Auth.JWTExpiration)
 
@@ -170,12 +172,21 @@ func NewContainer(db *sql.DB, gormDB *gorm.DB, cfg *config.Config) (*Container, 
 		cfg.Auth.VerificationBaseURL,
 	)
 
+	// Telegram notifications (optional)
+	var telegramSender telegramPort.Sender = telegramPort.NewNoopSender()
+	if cfg.Telegram.BotToken != "" && cfg.Telegram.ChatID != 0 {
+		telegramSender = telegramInfra.NewHTTPBotSender(cfg.Telegram.BotToken, cfg.Telegram.ChatID)
+		log.Printf("[telegram] notifications enabled chat_id=%d", cfg.Telegram.ChatID)
+	} else {
+		log.Printf("[telegram] notifications disabled (chat_id=%d token_set=%v)", cfg.Telegram.ChatID, cfg.Telegram.BotToken != "")
+	}
+
 	cookieManager := cookies.NewManagerFromEnv()
 	uploadsDir := cfg.Uploads.Dir
 	if uploadsDir == "" {
 		uploadsDir = "./uploads"
 	}
-	authHdlr := authHandler.NewHandler(authSvc, cookieManager, responder, validate, uploadsDir)
+	authHdlr := authHandler.NewHandler(authSvc, cookieManager, responder, validate, uploadsDir, telegramSender)
 
 	// Workspace handler
 	workspaceHdlr := workspaceHandler.NewHandler(workspaceSvc, responder, validate)
@@ -186,7 +197,7 @@ func NewContainer(db *sql.DB, gormDB *gorm.DB, cfg *config.Config) (*Container, 
 	masterHdlr := masterHandler.NewHandler(masterSvc, workspaceSvc, responder, validate)
 
 	crmRepository := crmRepo.NewRepository(db)
-	crmSvc := crmService.NewService(crmRepository, workspaceSvc, userRepository, rtPublisher)
+	crmSvc := crmService.NewService(crmRepository, workspaceSvc, userRepository, rtPublisher, permSvc)
 	crmHdlr := crmHandler.NewHandler(crmSvc, workspaceSvc, responder, validate)
 
 	// Notes module

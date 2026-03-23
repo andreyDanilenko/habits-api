@@ -1,11 +1,14 @@
 package permission
 
 import (
+	"errors"
+	"net/http"
+
 	"backend/internal/middleware"
 	"backend/internal/model"
+	permRepo "backend/internal/repository/permission"
 	permService "backend/internal/service/permission"
 	"backend/pkg/response"
-	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
@@ -30,6 +33,8 @@ func (h *Handler) RegisterRoutes(r *gin.RouterGroup) {
 	r.PUT("/roles/:roleId", h.UpdateRole)
 	r.DELETE("/roles/:roleId", h.DeleteRole)
 	r.GET("/roles/:roleId/permissions", h.GetRolePermissions)
+	r.GET("/roles/:roleId/object-scopes", h.GetRoleObjectScopes)
+	r.PUT("/roles/:roleId/object-scopes", h.PutRoleObjectScopes)
 	r.POST("/roles/:roleId/inherit/:parentRoleId", h.AddRoleInheritance)
 	r.DELETE("/roles/:roleId/inherit/:parentRoleId", h.RemoveRoleInheritance)
 	r.GET("/users/:userId/roles", h.GetUserRoles)
@@ -174,6 +179,57 @@ func (h *Handler) GetRolePermissions(c *gin.Context) {
 		return
 	}
 	h.responder.SuccessWithData(c, gin.H{"permissions": perms})
+}
+
+// GetRoleObjectScopes GET /workspaces/:workspaceId/roles/:roleId/object-scopes
+func (h *Handler) GetRoleObjectScopes(c *gin.Context) {
+	workspaceID := c.Param("workspaceId")
+	roleID := c.Param("roleId")
+	list, err := h.service.ListRoleObjectScopes(c.Request.Context(), workspaceID, roleID)
+	if err != nil {
+		if errors.Is(err, permRepo.ErrRoleNotFound) {
+			h.responder.NotFound(c, "Role not found")
+			return
+		}
+		h.responder.InternalServerError(c, "Failed to list object scopes")
+		return
+	}
+	m := make(map[string]string, len(list))
+	for _, row := range list {
+		m[row.ObjectKey] = row.DataScope
+	}
+	h.responder.SuccessWithData(c, gin.H{"objectScopes": m})
+}
+
+// PutRoleObjectScopes PUT /workspaces/:workspaceId/roles/:roleId/object-scopes
+// Body: { "objectScopes": { "crm:deal": "owner", "crm:contact": "all" } }
+func (h *Handler) PutRoleObjectScopes(c *gin.Context) {
+	workspaceID := c.Param("workspaceId")
+	roleID := c.Param("roleId")
+	var req struct {
+		ObjectScopes map[string]string `json:"objectScopes"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.responder.BadRequest(c, "Invalid request body")
+		return
+	}
+	if req.ObjectScopes == nil {
+		req.ObjectScopes = map[string]string{}
+	}
+	err := h.service.SetRoleObjectScopes(c.Request.Context(), workspaceID, roleID, req.ObjectScopes)
+	if err != nil {
+		if errors.Is(err, permRepo.ErrRoleNotFound) {
+			h.responder.NotFound(c, "Role not found")
+			return
+		}
+		if errors.Is(err, permService.ErrProtectedRoleObjectScopes) {
+			h.responder.Forbidden(c, err.Error())
+			return
+		}
+		h.responder.BadRequest(c, err.Error())
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 // GetUserRoles GET /workspaces/:workspaceId/users/:userId/roles
@@ -340,11 +396,22 @@ func (h *Handler) GetMyPermissions(c *gin.Context) {
 	}
 	systemRole := pickSystemRole(roles)
 
-	h.responder.SuccessWithData(c, gin.H{
+	dataScopes, deptID, hasDept, err := h.service.MeDataScopeContext(ctx, userID, workspaceID, userRole == model.UserRoleAdmin)
+	if err != nil {
+		h.responder.InternalServerError(c, "Failed to get data scopes")
+		return
+	}
+	out := gin.H{
 		"permissions": permissions,
 		"roles":       roles,
 		"systemRole":  systemRole,
-	})
+		"dataScopes":  dataScopes,
+	}
+	if hasDept {
+		out["departmentId"] = deptID
+	}
+
+	h.responder.SuccessWithData(c, out)
 }
 
 // pickSystemRole возвращает приоритетную роль workspace (OWNER > ADMIN > MEMBER > GUEST).

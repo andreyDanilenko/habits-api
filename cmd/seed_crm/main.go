@@ -6,7 +6,7 @@
 //
 // Пример:
 //
-//	 WORKSPACE_ID=b37735c9-8934-4f3d-877c-bb5015e83b7e USER_ID=b37735c9-8934-4f3d-877c-bb5015e83b7e go run ./cmd/seed_crm
+//	 WORKSPACE_ID=4cb4b10e-f90e-4dbe-8a8a-f224efdebb96 USER_ID=e8694a42-d2d8-448b-8d22-183bd51823ce go run ./cmd/seed_crm
 //		WORKSPACE_ID=59ebb151-036a-4d54-a5fb-a6d32466e8bd USER_ID=b37735c9-8934-4f3d-877c-bb5015e83b7e go run ./cmd/seed_crm
 package main
 
@@ -259,7 +259,7 @@ func main() {
 	dealContactIdx := []int{0, 71, 0, 3, 1, 72, 4, 0, 1, 5, 0, 73, 6, 74, 7, 75, 8, 2, 9, 76}
 	dealCompanyIdx := []int{0, 1, 2, 3, 0, -1, 4, 0, 0, 2, 0, -1, 5, -1, 6, -1, 7, 1, 8, -1}
 	dealPipelineIdx := []int{0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 1, 0, 1, 0, 0, 0, 3, 0, 0} // воронка 0..3
-	dealStageIdx := []int{2, 0, 3, 2, 2, 2, 1, 2, 3, 1, 3, 0, 1, 0, 2, 0, 1, 1, 3, 2}       // стадия внутри воронки
+	dealStageIdx := []int{2, 0, 3, 2, 2, 2, 1, 2, 3, 1, 3, 0, 1, 0, 2, 0, 1, 1, 3, 2}    // стадия внутри воронки
 	dealBudget := []float64{1500000, 50000, 1200000, 350000, 180000, 24000, 2500000, 85000, 120000, 890000, 1200000, 80000, 200000, 15000, 400000, 60000, 300000, 500000, 100000, 45000}
 	dealCurrency := []string{"RUB", "RUB", "RUB", "RUB", "RUB", "USD", "RUB", "RUB", "EUR", "RUB", "RUB", "USD", "RUB", "RUB", "RUB", "RUB", "RUB", "RUB", "RUB", "RUB"}
 	dealStatus := []string{"open", "open", "open", "open", "open", "won", "open", "open", "open", "open", "open", "open", "open", "won", "open", "open", "open", "open", "lost", "open"}
@@ -270,8 +270,8 @@ func main() {
 		{"крупный", "crm"}, {"дизайн"}, {"реклама"}, {"подписка"}, {"доработка"},
 		{"консультация"}, {"b2b", "крупный"}, {"ремонт"}, {"охрана"}, {"клининг"},
 	}
-	winStageByPipe := []int{4, 3, 3, 4}   // индекс стадии "выигрыш" по воронкам (Сделка, Продлён, Выплата, Закрыто)
-	lostStageByPipe := []int{5, 4, 4, 5}   // индекс стадии "проигрыш"
+	winStageByPipe := []int{4, 3, 3, 4}  // индекс стадии "выигрыш" по воронкам (Сделка, Продлён, Выплата, Закрыто)
+	lostStageByPipe := []int{5, 4, 4, 5} // индекс стадии "проигрыш"
 	nowDate := time.Now().Format("2006-01-02")
 	dealIDs := make([]uuid.UUID, 20)
 	for i := 0; i < 20; i++ {

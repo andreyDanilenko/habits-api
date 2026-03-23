@@ -630,6 +630,42 @@ func (r *Repository) ListMembers(ctx context.Context, workspaceID uuid.UUID) ([]
 	return list, nil
 }
 
+// ListMembersForFanout — user id + глобальная роль (users.role) для scoped realtime.
+func (r *Repository) ListMembersForFanout(ctx context.Context, workspaceID uuid.UUID) ([]model.WorkspaceMemberFanout, error) {
+	query := `
+		SELECT u.id, TRIM(u.role)
+		FROM user_workspaces uw
+		JOIN users u ON u.id = uw.user_id
+		WHERE uw.workspace_id = $1
+	`
+	rows, err := r.db.QueryContext(ctx, query, workspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("list members for fanout: %w", err)
+	}
+	defer rows.Close()
+
+	var list []model.WorkspaceMemberFanout
+	for rows.Next() {
+		var m model.WorkspaceMemberFanout
+		var roleStr string
+		if err := rows.Scan(&m.UserID, &roleStr); err != nil {
+			return nil, fmt.Errorf("scan member fanout: %w", err)
+		}
+		roleStr = strings.ToUpper(strings.TrimSpace(roleStr))
+		switch model.UserRole(roleStr) {
+		case model.UserRoleAdmin, model.UserRoleUser:
+			m.GlobalRole = model.UserRole(roleStr)
+		default:
+			m.GlobalRole = model.UserRoleUser
+		}
+		list = append(list, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return list, nil
+}
+
 // AddMember добавляет участника в workspace (user_workspaces). Роли назначаются отдельно через PermissionService.
 func (r *Repository) AddMember(ctx context.Context, workspaceID, userID uuid.UUID, role string) error {
 	role = strings.ToUpper(strings.TrimSpace(role))

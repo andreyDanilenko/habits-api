@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"time"
 
@@ -16,6 +17,7 @@ type Config struct {
 	Realtime RealtimeConfig
 	Uploads  UploadsConfig
 	Activity ActivityConfig
+	Telegram TelegramConfig
 }
 
 // ActivityConfig — запись событий в общую ленту (таблица activities).
@@ -64,6 +66,11 @@ type EmailConfig struct {
 	SMTPUsername string `env:"SMTP_USERNAME"`
 	SMTPPassword string `env:"SMTP_PASSWORD"`
 	Enabled      bool   `env:"EMAIL_ENABLED" envDefault:"false"`
+}
+
+type TelegramConfig struct {
+	BotToken string `env:"TELEGRAM_BOT_TOKEN"`
+	ChatID   int64  `env:"TELEGRAM_CHAT_ID"`
 }
 
 type LogsConfig struct {
@@ -117,6 +124,10 @@ func Load() (*Config, error) {
 		Activity: ActivityConfig{
 			Enabled: getEnvBool("ACTIVITY_LOG_ENABLED", true),
 		},
+		Telegram: TelegramConfig{
+			BotToken: getEnv("TELEGRAM_BOT_TOKEN", ""),
+			ChatID:   getEnvInt64("TELEGRAM_CHAT_ID", 0),
+		},
 	}, nil
 }
 
@@ -145,4 +156,16 @@ func getEnvDuration(key string, defaultValue time.Duration) time.Duration {
 		return defaultValue
 	}
 	return duration
+}
+
+func getEnvInt64(key string, defaultValue int64) int64 {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return defaultValue
+	}
+	var v int64
+	if _, err := fmt.Sscan(raw, &v); err != nil {
+		return defaultValue
+	}
+	return v
 }
