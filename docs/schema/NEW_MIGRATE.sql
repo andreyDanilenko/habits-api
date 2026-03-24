@@ -863,3 +863,20 @@ INSERT INTO permission_catalog (module_code, entity_type, action, name, is_syste
     ('tasks', 'task', 'update', 'Редактирование задачи', true),
     ('tasks', 'task', 'delete', 'Удаление задачи', true)
 ON CONFLICT (module_code, entity_type, action) DO NOTHING;
+
+-- =====================================================
+-- 18. Интеграции (Telegram + универсальные провайдеры)
+-- =====================================================
+CREATE TABLE user_integrations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    provider VARCHAR(50) NOT NULL,
+    external_id VARCHAR(255) NOT NULL,
+    settings JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (user_id, provider)
+);
+
+CREATE INDEX idx_user_integrations_provider ON user_integrations(provider);
+CREATE INDEX idx_user_integrations_external_id ON user_integrations(external_id);

@@ -9,15 +9,16 @@ import (
 )
 
 type Config struct {
-	Server   ServerConfig
-	Database DatabaseConfig
-	Logs     LogsConfig
-	Auth     AuthConfig
-	Email    EmailConfig
-	Realtime RealtimeConfig
-	Uploads  UploadsConfig
-	Activity ActivityConfig
-	Telegram TelegramConfig
+	Server       ServerConfig
+	Database     DatabaseConfig
+	Logs         LogsConfig
+	Auth         AuthConfig
+	Email        EmailConfig
+	Realtime     RealtimeConfig
+	Uploads      UploadsConfig
+	Activity     ActivityConfig
+	Telegram     TelegramConfig
+	Integrations IntegrationsConfig
 }
 
 // ActivityConfig — запись событий в общую ленту (таблица activities).
@@ -51,13 +52,13 @@ type DatabaseConfig struct {
 
 type AuthConfig struct {
 	JWTSecretKey              string        `env:"JWT_SECRET_KEY,required"`
-	JWTExpiration             time.Duration `env:"JWT_EXPIRATION" envDefault:"1h"`    // Access: 1 ч
+	JWTExpiration             time.Duration `env:"JWT_EXPIRATION" envDefault:"1h"`       // Access: 1 ч
 	RefreshExpiration         time.Duration `env:"REFRESH_EXPIRATION" envDefault:"240h"` // Refresh: 10 дней
 	CookieDomain              string        `env:"COOKIE_DOMAIN"`
 	SecureCookies             bool          `env:"SECURE_COOKIES" envDefault:"false"`
 	RegistrationTokenLifetime time.Duration `env:"REGISTRATION_TOKEN_LIFETIME" envDefault:"24h"` // Время жизни ссылки подтверждения
 	VerificationBaseURL       string        `env:"VERIFICATION_BASE_URL"`                        // Базовый URL для ссылки (например https://app.example.com)
-	InvitationTokenLifetime   time.Duration `env:"INVITATION_TOKEN_LIFETIME" envDefault:"168h"` // 7 дней
+	InvitationTokenLifetime   time.Duration `env:"INVITATION_TOKEN_LIFETIME" envDefault:"168h"`  // 7 дней
 }
 
 type EmailConfig struct {
@@ -69,8 +70,17 @@ type EmailConfig struct {
 }
 
 type TelegramConfig struct {
+	// Legacy/admin bot (used by backend auth notifications).
 	BotToken string `env:"TELEGRAM_BOT_TOKEN"`
 	ChatID   int64  `env:"TELEGRAM_CHAT_ID"`
+	// User-facing bot (used by n8n user workflows and /start links).
+	UserBotToken    string `env:"TELEGRAM_USER_BOT_TOKEN"`
+	UserBotUsername string `env:"TELEGRAM_USER_BOT_USERNAME"`
+}
+
+type IntegrationsConfig struct {
+	InternalAPIKey       string
+	TelegramLinkTokenTTL time.Duration
 }
 
 type LogsConfig struct {
@@ -125,8 +135,14 @@ func Load() (*Config, error) {
 			Enabled: getEnvBool("ACTIVITY_LOG_ENABLED", true),
 		},
 		Telegram: TelegramConfig{
-			BotToken: getEnv("TELEGRAM_BOT_TOKEN", ""),
-			ChatID:   getEnvInt64("TELEGRAM_CHAT_ID", 0),
+			BotToken:        getEnv("TELEGRAM_BOT_TOKEN", ""),
+			ChatID:          getEnvInt64("TELEGRAM_CHAT_ID", 0),
+			UserBotToken:    getEnv("TELEGRAM_USER_BOT_TOKEN", ""),
+			UserBotUsername: getEnv("TELEGRAM_USER_BOT_USERNAME", ""),
+		},
+		Integrations: IntegrationsConfig{
+			InternalAPIKey:       getEnv("INTERNAL_NOTIFICATIONS_API_KEY", ""),
+			TelegramLinkTokenTTL: getEnvDuration("TELEGRAM_LINK_TOKEN_TTL", 15*time.Minute),
 		},
 	}, nil
 }

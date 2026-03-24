@@ -1157,3 +1157,21 @@ COMMENT ON COLUMN tasks.spent_seconds IS 'Секунды затраченног�
 -- ========== 000038_task_tags ==========
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}';
 COMMENT ON COLUMN tasks.tags IS 'Теги задачи';
+
+-- ========== 000032_user_integrations ==========
+CREATE TABLE user_integrations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    provider VARCHAR(50) NOT NULL,
+    external_id VARCHAR(255) NOT NULL,
+    settings JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (user_id, provider)
+);
+
+CREATE INDEX idx_user_integrations_provider
+    ON user_integrations(provider);
+
+CREATE INDEX idx_user_integrations_external_id
+    ON user_integrations(external_id);

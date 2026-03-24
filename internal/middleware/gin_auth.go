@@ -45,8 +45,6 @@ func GinAuthMiddleware(tokenGen *token.Generator, responder *response.Responder)
 			return
 		}
 
-		fmt.Println("GinAuthMiddleware: token found:", tokenString)
-
 		// Валидируем токен
 		claims, err := tokenGen.Validate(tokenString)
 		if err != nil {

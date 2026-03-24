@@ -8,33 +8,34 @@ import (
 	authHandler "backend/internal/handler/auth"
 	crmHandler "backend/internal/handler/crm"
 	habitsHandler "backend/internal/handler/habits"
+	integrationHandler "backend/internal/handler/integration"
 	invitationHandler "backend/internal/handler/invitation"
 	journalHandler "backend/internal/handler/journal"
 	loggerHandler "backend/internal/handler/logger"
 	masterHandler "backend/internal/handler/master"
 	notesHandler "backend/internal/handler/notes"
-	taskHandler "backend/internal/handler/task"
 	notificationHandler "backend/internal/handler/notification"
 	permissionHandler "backend/internal/handler/permission"
 	projectHandler "backend/internal/handler/project"
 	swaggerHandler "backend/internal/handler/swagger"
+	taskHandler "backend/internal/handler/task"
 	workspaceHandler "backend/internal/handler/workspace"
 	"backend/internal/middleware"
-	telegramInfra "backend/internal/telegram"
 	activityRepo "backend/internal/repository/activity"
 	crmRepo "backend/internal/repository/crm"
 	habitsRepo "backend/internal/repository/habits"
+	integrationRepo "backend/internal/repository/integration"
 	invitationRepo "backend/internal/repository/invitation"
 	journalRepo "backend/internal/repository/journal"
 	licenseRepo "backend/internal/repository/license"
 	loggerRepo "backend/internal/repository/logger"
 	masterRepo "backend/internal/repository/master"
 	notesRepo "backend/internal/repository/notes"
-	taskRepo "backend/internal/repository/task"
 	notificationRepo "backend/internal/repository/notification"
 	permissionRepo "backend/internal/repository/permission"
 	projectRepo "backend/internal/repository/project"
 	regTokenRepo "backend/internal/repository/registration_token"
+	taskRepo "backend/internal/repository/task"
 	userRepo "backend/internal/repository/user"
 	userPrefsRepo "backend/internal/repository/user_preferences"
 	workspaceRepo "backend/internal/repository/workspace"
@@ -47,19 +48,20 @@ import (
 	loggerService "backend/internal/service/logger"
 	masterService "backend/internal/service/master"
 	notesService "backend/internal/service/notes"
-	taskService "backend/internal/service/task"
 	notificationService "backend/internal/service/notification"
 	permissionService "backend/internal/service/permission"
 	projectService "backend/internal/service/project"
+	taskService "backend/internal/service/task"
 	workspaceService "backend/internal/service/workspace"
+	telegramInfra "backend/internal/telegram"
 	"backend/pkg/auth/token"
 	"backend/pkg/cache"
 	"backend/pkg/email"
 	"backend/pkg/http/cookies"
 	"backend/pkg/password"
-	telegramPort "backend/pkg/telegram"
 	"backend/pkg/realtime"
 	"backend/pkg/response"
+	telegramPort "backend/pkg/telegram"
 	"database/sql"
 	"log"
 	"net/http"
@@ -72,31 +74,32 @@ import (
 )
 
 type Container struct {
-	Cfg              *config.Config
-	Router           *router.Router
-	AuthHandler      *authHandler.Handler
-	AdminHandler     *adminHandler.Handler
-	WorkspaceHandler *workspaceHandler.Handler
-	WorkspaceService *workspaceService.Service
-	AccessChecker    workspaceService.AccessChecker
-	MasterHandler    *masterHandler.Handler
-	CrmHandler       *crmHandler.Handler
+	Cfg                 *config.Config
+	Router              *router.Router
+	AuthHandler         *authHandler.Handler
+	AdminHandler        *adminHandler.Handler
+	WorkspaceHandler    *workspaceHandler.Handler
+	WorkspaceService    *workspaceService.Service
+	AccessChecker       workspaceService.AccessChecker
+	MasterHandler       *masterHandler.Handler
+	CrmHandler          *crmHandler.Handler
 	NotesHandler        *notesHandler.Handler
 	TaskHandler         *taskHandler.Handler
 	NotificationHandler *notificationHandler.Handler
 	ProjectHandler      *projectHandler.Handler
-	HabitsHandler    *habitsHandler.Handler
-	JournalHandler   *journalHandler.Handler
-	LoggerHandler      *loggerHandler.Handler
-	LogService         *loggerService.Service
-	Enforcer           *casbin.Enforcer
-	PermissionService  *permissionService.Service
-	PermissionHandler  *permissionHandler.Handler
-	InvitationHandler  *invitationHandler.Handler
-	TokenGen           *token.Generator
-	UserRepository     userRepo.UserRepository
-	Responder        *response.Responder
-	Validate         *validator.Validate
+	HabitsHandler       *habitsHandler.Handler
+	IntegrationHandler  *integrationHandler.Handler
+	JournalHandler      *journalHandler.Handler
+	LoggerHandler       *loggerHandler.Handler
+	LogService          *loggerService.Service
+	Enforcer            *casbin.Enforcer
+	PermissionService   *permissionService.Service
+	PermissionHandler   *permissionHandler.Handler
+	InvitationHandler   *invitationHandler.Handler
+	TokenGen            *token.Generator
+	UserRepository      userRepo.UserRepository
+	Responder           *response.Responder
+	Validate            *validator.Validate
 }
 
 func NewContainer(db *sql.DB, gormDB *gorm.DB, cfg *config.Config) (*Container, error) {
@@ -176,9 +179,13 @@ func NewContainer(db *sql.DB, gormDB *gorm.DB, cfg *config.Config) (*Container, 
 	var telegramSender telegramPort.Sender = telegramPort.NewNoopSender()
 	if cfg.Telegram.BotToken != "" && cfg.Telegram.ChatID != 0 {
 		telegramSender = telegramInfra.NewHTTPBotSender(cfg.Telegram.BotToken, cfg.Telegram.ChatID)
-		log.Printf("[telegram] notifications enabled chat_id=%d", cfg.Telegram.ChatID)
+		log.Printf("[telegram] admin notifications enabled chat_id=%d", cfg.Telegram.ChatID)
 	} else {
-		log.Printf("[telegram] notifications disabled (chat_id=%d token_set=%v)", cfg.Telegram.ChatID, cfg.Telegram.BotToken != "")
+		log.Printf(
+			"[telegram] admin notifications disabled (chat_id=%d token_set=%v)",
+			cfg.Telegram.ChatID,
+			cfg.Telegram.BotToken != "",
+		)
 	}
 
 	cookieManager := cookies.NewManagerFromEnv()
@@ -222,6 +229,16 @@ func NewContainer(db *sql.DB, gormDB *gorm.DB, cfg *config.Config) (*Container, 
 	habitsSvc := habitsService.NewService(habitsRepository, activityRepository, activityWriter, workspaceRepository, rtPublisher)
 	habitsHdlr := habitsHandler.NewHandler(habitsSvc, responder, validate)
 
+	// Integrations (Telegram user bind: create link + confirm link)
+	integrationRepository := integrationRepo.NewRepository(db)
+	integrationHdlr := integrationHandler.NewHandler(
+		integrationRepository,
+		responder,
+		cfg.Integrations.InternalAPIKey,
+		cfg.Telegram.UserBotUsername,
+		cfg.Integrations.TelegramLinkTokenTTL,
+	)
+
 	// Journal (no longer depends on habits)
 	journalRepository := journalRepo.NewRepository(db)
 	journalSvc := journalService.NewService(journalRepository, activityWriter, rtPublisher)
@@ -248,31 +265,32 @@ func NewContainer(db *sql.DB, gormDB *gorm.DB, cfg *config.Config) (*Container, 
 	notificationHdlr := notificationHandler.NewHandler(notificationSvc, responder, validate)
 
 	return &Container{
-		Cfg:              cfg,
-		Router:           r,
-		AuthHandler:      authHdlr,
-		AdminHandler:     adminHdlr,
-		WorkspaceHandler: workspaceHdlr,
-		WorkspaceService: workspaceSvc,
-		AccessChecker:    accessChecker,
-		MasterHandler:    masterHdlr,
-		CrmHandler:       crmHdlr,
+		Cfg:                 cfg,
+		Router:              r,
+		AuthHandler:         authHdlr,
+		AdminHandler:        adminHdlr,
+		WorkspaceHandler:    workspaceHdlr,
+		WorkspaceService:    workspaceSvc,
+		AccessChecker:       accessChecker,
+		MasterHandler:       masterHdlr,
+		CrmHandler:          crmHdlr,
 		NotesHandler:        notesHdlr,
 		TaskHandler:         taskHdlr,
 		NotificationHandler: notificationHdlr,
 		ProjectHandler:      projectHdlr,
-		HabitsHandler:    habitsHdlr,
-		JournalHandler:   journalHdlr,
-		LoggerHandler:     loggerHdlr,
-		LogService:        logService,
-		Enforcer:          enforcer,
-		PermissionService: permSvc,
-		PermissionHandler: permissionHdlr,
-		InvitationHandler: invitationHdlr,
-		TokenGen:          tokenGen,
-		UserRepository:    userRepository,
-		Responder:         responder,
-		Validate:          validate,
+		HabitsHandler:       habitsHdlr,
+		IntegrationHandler:  integrationHdlr,
+		JournalHandler:      journalHdlr,
+		LoggerHandler:       loggerHdlr,
+		LogService:          logService,
+		Enforcer:            enforcer,
+		PermissionService:   permSvc,
+		PermissionHandler:   permissionHdlr,
+		InvitationHandler:   invitationHdlr,
+		TokenGen:            tokenGen,
+		UserRepository:      userRepository,
+		Responder:           responder,
+		Validate:            validate,
 	}, nil
 }
 
@@ -306,14 +324,14 @@ func (c *Container) RegisterRoutes(r *router.Router) {
 	protected.Use(middleware.ModuleLicenseMiddleware(c.WorkspaceService, c.Responder))
 	protected.Use(middleware.PermissionMiddleware(c.Enforcer, c.PermissionService, c.Responder))
 
-		// Protected auth routes (me)
-		protectedAuthGroup := protected.Group("/auth")
-		c.AuthHandler.RegisterProtectedRoutes(protectedAuthGroup)
+	// Protected auth routes (me)
+	protectedAuthGroup := protected.Group("/auth")
+	c.AuthHandler.RegisterProtectedRoutes(protectedAuthGroup)
 
-		// Avatar по ID пользователя (для списков участников, комментариев)
-		protected.GET("/users/:userId/avatar", c.AuthHandler.GetUserAvatar)
+	// Avatar по ID пользователя (для списков участников, комментариев)
+	protected.GET("/users/:userId/avatar", c.AuthHandler.GetUserAvatar)
 
-		// Me (текущий пользователь): права в workspace, уведомления
+	// Me (текущий пользователь): права в workspace, уведомления
 	meGroup := protected.Group("/me")
 	meGroup.GET("/permissions", c.PermissionHandler.GetMyPermissions)
 	c.NotificationHandler.RegisterRoutes(meGroup)
@@ -338,6 +356,14 @@ func (c *Container) RegisterRoutes(r *router.Router) {
 	publicGroup.Use(middleware.OptionalGinAuthMiddleware(c.TokenGen, c.UserRepository))
 	publicInvitationsGroup := publicGroup.Group("/invitations")
 	c.InvitationHandler.RegisterPublicRoutes(publicInvitationsGroup)
+
+	// Integrations:
+	// - /api/v1/integrations/telegram/link (protected; current user)
+	// - /api/v1/integrations/telegram/confirm (internal; x-internal-api-key)
+	protectedIntegrationsGroup := protected.Group("/integrations")
+	c.IntegrationHandler.RegisterProtectedRoutes(protectedIntegrationsGroup)
+	internalIntegrationsGroup := apiV1.Group("/integrations")
+	c.IntegrationHandler.RegisterInternalRoutes(internalIntegrationsGroup)
 
 	adminGroup := protected.Group("/admin")
 	adminGroup.Use(middleware.RequireAdmin(c.Responder))
