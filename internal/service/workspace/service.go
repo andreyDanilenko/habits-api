@@ -136,6 +136,64 @@ func (s *Service) Update(ctx context.Context, workspaceID string, dto model.Upda
 	return ws, nil
 }
 
+func (s *Service) SetLogoPath(ctx context.Context, workspaceID string, logoPath *string, userID string, userRole model.UserRole) (*model.Workspace, error) {
+	wsID, err := uuid.Parse(workspaceID)
+	if err != nil {
+		return nil, err
+	}
+
+	uid, err := uuid.Parse(userID)
+	if err != nil {
+		return nil, err
+	}
+
+	hasAccess, err := s.repo.CheckAccess(ctx, wsID, uid, userRole)
+	if err != nil {
+		return nil, err
+	}
+	if !hasAccess {
+		return nil, ErrAccessDenied
+	}
+
+	ws, err := s.repo.SetLogoPath(ctx, wsID, logoPath)
+	if err != nil {
+		return nil, err
+	}
+	if ws == nil {
+		return nil, ErrWorkspaceNotFound
+	}
+	return ws, nil
+}
+
+func (s *Service) ClearLogo(ctx context.Context, workspaceID string, userID string, userRole model.UserRole) (*model.Workspace, error) {
+	wsID, err := uuid.Parse(workspaceID)
+	if err != nil {
+		return nil, err
+	}
+
+	uid, err := uuid.Parse(userID)
+	if err != nil {
+		return nil, err
+	}
+
+	hasAccess, err := s.repo.CheckAccess(ctx, wsID, uid, userRole)
+	if err != nil {
+		return nil, err
+	}
+	if !hasAccess {
+		return nil, ErrAccessDenied
+	}
+
+	ws, err := s.repo.ClearLogo(ctx, wsID)
+	if err != nil {
+		return nil, err
+	}
+	if ws == nil {
+		return nil, ErrWorkspaceNotFound
+	}
+	return ws, nil
+}
+
 func (s *Service) Delete(ctx context.Context, workspaceID, userID string, userRole model.UserRole) error {
 	wsID, err := uuid.Parse(workspaceID)
 	if err != nil {

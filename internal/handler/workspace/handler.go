@@ -3,6 +3,9 @@ package workspace
 import (
 	"database/sql"
 	"errors"
+	"io"
+	"os"
+	"path/filepath"
 
 	"backend/internal/middleware"
 	"backend/internal/model"
@@ -11,23 +14,27 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
+	"github.com/google/uuid"
 )
 
 type Handler struct {
-	service   *workspaceService.Service
-	validate  *validator.Validate
-	responder *response.Responder
+	service    *workspaceService.Service
+	validate   *validator.Validate
+	responder  *response.Responder
+	uploadsDir string
 }
 
 func NewHandler(
 	service *workspaceService.Service,
 	responder *response.Responder,
 	validate *validator.Validate,
+	uploadsDir string,
 ) *Handler {
 	return &Handler{
-		service:   service,
+		service:    service,
 		responder: responder,
-		validate:  validate,
+		validate:   validate,
+		uploadsDir: uploadsDir,
 	}
 }
 
@@ -39,6 +46,9 @@ func (h *Handler) RegisterRoutes(r *gin.RouterGroup) {
 	r.GET(RouteGet, h.Get)
 	r.PUT(RouteUpdate, h.Update)
 	r.DELETE(RouteDelete, h.Delete)
+	r.POST(RouteLogo, h.UploadLogo)
+	r.GET(RouteLogo, h.GetLogo)
+	r.DELETE(RouteLogo, h.DeleteLogo)
 	r.GET(RouteMembers, h.GetMembers)
 	r.DELETE(RouteMemberOne, h.RemoveMember)
 	r.PATCH(RouteMemberOne, h.UpdateMemberRole)
@@ -46,6 +56,19 @@ func (h *Handler) RegisterRoutes(r *gin.RouterGroup) {
 	r.GET(RouteModules, h.GetModules)
 	r.POST(RouteModules, h.EnableModule)
 	r.DELETE(RouteModuleOne, h.DisableModule)
+}
+
+const maxWorkspaceLogoUploadBytes = 10 << 20 // 10 MiB
+
+func allowedWorkspaceLogoTypes(contentType string) bool {
+	allowedTypes := map[string]bool{
+		"image/jpeg": true,
+		"image/jpg":  true,
+		"image/png":  true,
+		"image/gif":  true,
+		"image/webp": true,
+	}
+	return allowedTypes[contentType]
 }
 
 // List godoc
@@ -542,4 +565,194 @@ func (h *Handler) DisableModule(c *gin.Context) {
 		return
 	}
 	h.responder.SuccessWithMessage(c, "Module disabled successfully")
+}
+
+func (h *Handler) UploadLogo(c *gin.Context) {
+	userID, ok := middleware.GetUserIDFromGin(c)
+	if !ok {
+		h.responder.Unauthorized(c, "Authentication required")
+		return
+	}
+
+	roleVal, _ := c.Get(middleware.GinRoleKey)
+	userRole := model.UserRoleUser
+	if roleVal != nil {
+		userRole = roleVal.(model.UserRole)
+	}
+
+	workspaceID := c.Param("workspaceId")
+	if workspaceID == "" {
+		h.responder.BadRequest(c, "Workspace ID required")
+		return
+	}
+	if _, err := uuid.Parse(workspaceID); err != nil {
+		h.responder.BadRequest(c, "Invalid workspace ID")
+		return
+	}
+
+	file, err := c.FormFile("file")
+	if err != nil {
+		h.responder.BadRequest(c, "File required")
+		return
+	}
+	if file.Size > maxWorkspaceLogoUploadBytes {
+		h.responder.BadRequest(c, "Image too large (max 10 MB)")
+		return
+	}
+
+	contentType := file.Header.Get("Content-Type")
+	if !allowedWorkspaceLogoTypes(contentType) {
+		h.responder.BadRequest(c, "Only images (JPEG, PNG, GIF, WebP) are allowed")
+		return
+	}
+
+	ext := filepath.Ext(file.Filename)
+	if ext == "" {
+		ext = ".png"
+	}
+	safeName := uuid.New().String() + ext
+
+	// Удаляем старый файл (если есть), чтобы не накапливались лишние версии.
+	if old, err := h.service.Get(c.Request.Context(), workspaceID, userID, userRole); err == nil && old != nil && old.LogoPath != nil && *old.LogoPath != "" {
+		_ = os.Remove(filepath.Join(h.uploadsDir, *old.LogoPath))
+	}
+
+	dir := filepath.Join(h.uploadsDir, "workspaces", workspaceID)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		h.responder.InternalServerError(c, "Failed to create upload directory")
+		return
+	}
+
+	destPath := filepath.Join(dir, safeName)
+	src, err := file.Open()
+	if err != nil {
+		h.responder.InternalServerError(c, "Failed to read file")
+		return
+	}
+	defer src.Close()
+
+	dst, err := os.Create(destPath)
+	if err != nil {
+		h.responder.InternalServerError(c, "Failed to save file")
+		return
+	}
+	defer dst.Close()
+
+	if _, err := io.Copy(dst, src); err != nil {
+		_ = os.Remove(destPath)
+		h.responder.InternalServerError(c, "Failed to save file")
+		return
+	}
+
+	relPath := filepath.Join("workspaces", workspaceID, safeName)
+	workspace, err := h.service.SetLogoPath(c.Request.Context(), workspaceID, &relPath, userID, userRole)
+	if err != nil {
+		switch err {
+		case workspaceService.ErrWorkspaceNotFound:
+			h.responder.NotFound(c, "Workspace not found")
+		case workspaceService.ErrAccessDenied:
+			h.responder.Forbidden(c, "Access denied")
+		default:
+			h.responder.InternalServerError(c, "Failed to update workspace logo")
+		}
+		return
+	}
+
+	h.responder.SuccessWithData(c, gin.H{"workspace": workspace})
+}
+
+func (h *Handler) GetLogo(c *gin.Context) {
+	userID, ok := middleware.GetUserIDFromGin(c)
+	if !ok {
+		h.responder.Unauthorized(c, "Authentication required")
+		return
+	}
+
+	roleVal, _ := c.Get(middleware.GinRoleKey)
+	userRole := model.UserRoleUser
+	if roleVal != nil {
+		userRole = roleVal.(model.UserRole)
+	}
+
+	workspaceID := c.Param("workspaceId")
+	if workspaceID == "" {
+		h.responder.BadRequest(c, "Workspace ID required")
+		return
+	}
+	if _, err := uuid.Parse(workspaceID); err != nil {
+		h.responder.BadRequest(c, "Invalid workspace ID")
+		return
+	}
+
+	workspace, err := h.service.Get(c.Request.Context(), workspaceID, userID, userRole)
+	if err != nil {
+		switch err {
+		case workspaceService.ErrWorkspaceNotFound:
+			h.responder.NotFound(c, "Workspace not found")
+		case workspaceService.ErrAccessDenied:
+			h.responder.Forbidden(c, "Access denied")
+		default:
+			h.responder.InternalServerError(c, "Failed to get workspace")
+		}
+		return
+	}
+
+	if workspace == nil || workspace.LogoPath == nil || *workspace.LogoPath == "" {
+		h.responder.NotFound(c, "Logo not found")
+		return
+	}
+
+	fullPath := filepath.Join(h.uploadsDir, *workspace.LogoPath)
+	if _, err := os.Stat(fullPath); errors.Is(err, os.ErrNotExist) {
+		h.responder.NotFound(c, "Logo not found")
+		return
+	}
+
+	c.Header("Cache-Control", "public, max-age=86400")
+	c.File(fullPath)
+}
+
+func (h *Handler) DeleteLogo(c *gin.Context) {
+	userID, ok := middleware.GetUserIDFromGin(c)
+	if !ok {
+		h.responder.Unauthorized(c, "Authentication required")
+		return
+	}
+
+	roleVal, _ := c.Get(middleware.GinRoleKey)
+	userRole := model.UserRoleUser
+	if roleVal != nil {
+		userRole = roleVal.(model.UserRole)
+	}
+
+	workspaceID := c.Param("workspaceId")
+	if workspaceID == "" {
+		h.responder.BadRequest(c, "Workspace ID required")
+		return
+	}
+	if _, err := uuid.Parse(workspaceID); err != nil {
+		h.responder.BadRequest(c, "Invalid workspace ID")
+		return
+	}
+
+	// Удаляем старый файл (если есть), чтобы освободить место на диске.
+	old, err := h.service.Get(c.Request.Context(), workspaceID, userID, userRole)
+	if err == nil && old != nil && old.LogoPath != nil && *old.LogoPath != "" {
+		_ = os.Remove(filepath.Join(h.uploadsDir, *old.LogoPath))
+	}
+
+	updated, err := h.service.ClearLogo(c.Request.Context(), workspaceID, userID, userRole)
+	if err != nil {
+		switch err {
+		case workspaceService.ErrWorkspaceNotFound:
+			h.responder.NotFound(c, "Workspace not found")
+		case workspaceService.ErrAccessDenied:
+			h.responder.Forbidden(c, "Access denied")
+		default:
+			h.responder.InternalServerError(c, "Failed to clear workspace logo")
+		}
+		return
+	}
+
+	h.responder.SuccessWithData(c, gin.H{"workspace": updated})
 }

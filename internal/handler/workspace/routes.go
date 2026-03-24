@@ -8,6 +8,7 @@ const (
 	RouteGet        = "/:workspaceId"
 	RouteUpdate     = "/:workspaceId"
 	RouteDelete     = "/:workspaceId"
+	RouteLogo       = "/:workspaceId/logo"
 	RouteMembers    = "/:workspaceId/members"
 	RouteMemberOne  = "/:workspaceId/members/:userId"
 	RouteSwitch     = "/:workspaceId/switch"

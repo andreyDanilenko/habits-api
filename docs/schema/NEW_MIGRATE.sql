@@ -64,6 +64,8 @@ CREATE TABLE workspaces (
     name VARCHAR(255) NOT NULL,
     description TEXT,
     color VARCHAR(50) DEFAULT '#3B82F6',
+    logo_path TEXT,
+    logo_scale DOUBLE PRECISION NOT NULL DEFAULT 1.0,
     owner_id UUID NOT NULL REFERENCES users(id),
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()

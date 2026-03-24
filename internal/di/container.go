@@ -189,7 +189,7 @@ func NewContainer(db *sql.DB, gormDB *gorm.DB, cfg *config.Config) (*Container, 
 	authHdlr := authHandler.NewHandler(authSvc, cookieManager, responder, validate, uploadsDir, telegramSender)
 
 	// Workspace handler
-	workspaceHdlr := workspaceHandler.NewHandler(workspaceSvc, responder, validate)
+	workspaceHdlr := workspaceHandler.NewHandler(workspaceSvc, responder, validate, uploadsDir)
 
 	// Master data (Shared Schema: currencies, counterparties)
 	masterRepository := masterRepo.NewRepository(db)

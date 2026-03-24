@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -24,9 +25,26 @@ func NewRepository(db *sql.DB) *Repository {
 	}
 }
 
+func (r *Repository) withLogoURL(ws *model.Workspace) {
+	if ws == nil {
+		return
+	}
+	if ws.LogoPath != nil && *ws.LogoPath != "" {
+		base := "/api/v1/workspaces/" + ws.ID + "/logo"
+		if ws.UpdatedAt != "" {
+			versioned := base + "?v=" + url.QueryEscape(ws.UpdatedAt)
+			ws.LogoUrl = &versioned
+			return
+		}
+		ws.LogoUrl = &base
+		return
+	}
+	ws.LogoUrl = nil
+}
+
 func (r *Repository) List(ctx context.Context, userID uuid.UUID) ([]model.Workspace, error) {
 	query := `
-		SELECT w.id, w.name, w.description, w.color, w.owner_id, w.created_at, w.updated_at
+		SELECT w.id, w.name, w.description, w.color, w.logo_path, w.logo_scale, w.owner_id, w.created_at, w.updated_at
 		FROM workspaces w
 		INNER JOIN user_workspaces uw ON w.id = uw.workspace_id
 		WHERE uw.user_id = $1
@@ -44,12 +62,15 @@ func (r *Repository) List(ctx context.Context, userID uuid.UUID) ([]model.Worksp
 		var ws model.Workspace
 		var createdAt, updatedAt time.Time
 		var description sql.NullString
+		var logoPath sql.NullString
 
 		err := rows.Scan(
 			&ws.ID,
 			&ws.Name,
 			&description,
 			&ws.Color,
+			&logoPath,
+			&ws.LogoScale,
 			&ws.OwnerID,
 			&createdAt,
 			&updatedAt,
@@ -61,8 +82,12 @@ func (r *Repository) List(ctx context.Context, userID uuid.UUID) ([]model.Worksp
 		if description.Valid {
 			ws.Description = &description.String
 		}
+		if logoPath.Valid && logoPath.String != "" {
+			ws.LogoPath = &logoPath.String
+		}
 		ws.CreatedAt = createdAt.Format(time.RFC3339)
 		ws.UpdatedAt = updatedAt.Format(time.RFC3339)
+		r.withLogoURL(&ws)
 		workspaces = append(workspaces, ws)
 	}
 
@@ -76,7 +101,7 @@ func (r *Repository) List(ctx context.Context, userID uuid.UUID) ([]model.Worksp
 // ListAll возвращает все workspaces (только для админа).
 func (r *Repository) ListAll(ctx context.Context) ([]model.Workspace, error) {
 	query := `
-		SELECT id, name, description, color, owner_id, created_at, updated_at
+		SELECT id, name, description, color, logo_path, logo_scale, owner_id, created_at, updated_at
 		FROM workspaces
 		ORDER BY created_at DESC
 	`
@@ -91,11 +116,14 @@ func (r *Repository) ListAll(ctx context.Context) ([]model.Workspace, error) {
 		var ws model.Workspace
 		var createdAt, updatedAt time.Time
 		var description sql.NullString
+		var logoPath sql.NullString
 		err := rows.Scan(
 			&ws.ID,
 			&ws.Name,
 			&description,
 			&ws.Color,
+			&logoPath,
+			&ws.LogoScale,
 			&ws.OwnerID,
 			&createdAt,
 			&updatedAt,
@@ -106,8 +134,12 @@ func (r *Repository) ListAll(ctx context.Context) ([]model.Workspace, error) {
 		if description.Valid {
 			ws.Description = &description.String
 		}
+		if logoPath.Valid && logoPath.String != "" {
+			ws.LogoPath = &logoPath.String
+		}
 		ws.CreatedAt = createdAt.Format(time.RFC3339)
 		ws.UpdatedAt = updatedAt.Format(time.RFC3339)
+		r.withLogoURL(&ws)
 		workspaces = append(workspaces, ws)
 	}
 	if err := rows.Err(); err != nil {
@@ -127,12 +159,13 @@ func (r *Repository) Create(ctx context.Context, dto model.CreateWorkspaceDto, o
 	query := `
 		INSERT INTO workspaces (id, name, description, color, owner_id, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		RETURNING id, name, description, color, owner_id, created_at, updated_at
+		RETURNING id, name, description, color, logo_path, logo_scale, owner_id, created_at, updated_at
 	`
 
 	var ws model.Workspace
 	var createdAt, updatedAt time.Time
 	var description sql.NullString
+	var logoPath sql.NullString
 
 	err := r.db.QueryRowContext(ctx, query,
 		workspaceID,
@@ -147,6 +180,8 @@ func (r *Repository) Create(ctx context.Context, dto model.CreateWorkspaceDto, o
 		&ws.Name,
 		&description,
 		&ws.Color,
+		&logoPath,
+		&ws.LogoScale,
 		&ws.OwnerID,
 		&createdAt,
 		&updatedAt,
@@ -158,8 +193,12 @@ func (r *Repository) Create(ctx context.Context, dto model.CreateWorkspaceDto, o
 	if description.Valid {
 		ws.Description = &description.String
 	}
+	if logoPath.Valid && logoPath.String != "" {
+		ws.LogoPath = &logoPath.String
+	}
 	ws.CreatedAt = createdAt.Format(time.RFC3339)
 	ws.UpdatedAt = updatedAt.Format(time.RFC3339)
+	r.withLogoURL(&ws)
 
 	// Добавляем владельца в user_workspaces
 	_, err = r.db.ExecContext(ctx,
@@ -175,7 +214,7 @@ func (r *Repository) Create(ctx context.Context, dto model.CreateWorkspaceDto, o
 
 func (r *Repository) Get(ctx context.Context, workspaceID uuid.UUID) (*model.Workspace, error) {
 	query := `
-		SELECT id, name, description, color, owner_id, created_at, updated_at
+		SELECT id, name, description, color, logo_path, logo_scale, owner_id, created_at, updated_at
 		FROM workspaces
 		WHERE id = $1
 	`
@@ -183,12 +222,15 @@ func (r *Repository) Get(ctx context.Context, workspaceID uuid.UUID) (*model.Wor
 	var ws model.Workspace
 	var createdAt, updatedAt time.Time
 	var description sql.NullString
+	var logoPath sql.NullString
 
 	err := r.db.QueryRowContext(ctx, query, workspaceID).Scan(
 		&ws.ID,
 		&ws.Name,
 		&description,
 		&ws.Color,
+		&logoPath,
+		&ws.LogoScale,
 		&ws.OwnerID,
 		&createdAt,
 		&updatedAt,
@@ -204,8 +246,12 @@ func (r *Repository) Get(ctx context.Context, workspaceID uuid.UUID) (*model.Wor
 	if description.Valid {
 		ws.Description = &description.String
 	}
+	if logoPath.Valid && logoPath.String != "" {
+		ws.LogoPath = &logoPath.String
+	}
 	ws.CreatedAt = createdAt.Format(time.RFC3339)
 	ws.UpdatedAt = updatedAt.Format(time.RFC3339)
+	r.withLogoURL(&ws)
 
 	return &ws, nil
 }
@@ -217,19 +263,22 @@ func (r *Repository) Update(ctx context.Context, workspaceID uuid.UUID, dto mode
 			name = COALESCE($1, name),
 			description = COALESCE($2, description),
 			color = COALESCE($3, color),
-			updated_at = $4
-		WHERE id = $5
-		RETURNING id, name, description, color, owner_id, created_at, updated_at
+			logo_scale = COALESCE($4, logo_scale),
+			updated_at = $5
+		WHERE id = $6
+		RETURNING id, name, description, color, logo_path, logo_scale, owner_id, created_at, updated_at
 	`
 
 	var ws model.Workspace
 	var createdAt, updatedAt time.Time
 	var description sql.NullString
+	var logoPath sql.NullString
 
 	err := r.db.QueryRowContext(ctx, query,
 		dto.Name,
 		dto.Description,
 		dto.Color,
+		dto.LogoScale,
 		now,
 		workspaceID,
 	).Scan(
@@ -237,6 +286,8 @@ func (r *Repository) Update(ctx context.Context, workspaceID uuid.UUID, dto mode
 		&ws.Name,
 		&description,
 		&ws.Color,
+		&logoPath,
+		&ws.LogoScale,
 		&ws.OwnerID,
 		&createdAt,
 		&updatedAt,
@@ -252,9 +303,107 @@ func (r *Repository) Update(ctx context.Context, workspaceID uuid.UUID, dto mode
 	if description.Valid {
 		ws.Description = &description.String
 	}
+	if logoPath.Valid && logoPath.String != "" {
+		ws.LogoPath = &logoPath.String
+	}
 	ws.CreatedAt = createdAt.Format(time.RFC3339)
 	ws.UpdatedAt = updatedAt.Format(time.RFC3339)
+	r.withLogoURL(&ws)
 
+	return &ws, nil
+}
+
+func (r *Repository) SetLogoPath(ctx context.Context, workspaceID uuid.UUID, logoPath *string) (*model.Workspace, error) {
+	now := time.Now()
+	query := `
+		UPDATE workspaces SET
+			logo_path = COALESCE($1, logo_path),
+			updated_at = $2
+		WHERE id = $3
+		RETURNING id, name, description, color, logo_path, logo_scale, owner_id, created_at, updated_at
+	`
+
+	var ws model.Workspace
+	var createdAt, updatedAt time.Time
+	var description sql.NullString
+	var returnedLogoPath sql.NullString
+
+	err := r.db.QueryRowContext(ctx, query, logoPath, now, workspaceID).Scan(
+		&ws.ID,
+		&ws.Name,
+		&description,
+		&ws.Color,
+		&returnedLogoPath,
+		&ws.LogoScale,
+		&ws.OwnerID,
+		&createdAt,
+		&updatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to set workspace logo: %w", err)
+	}
+
+	if description.Valid {
+		ws.Description = &description.String
+	}
+	if returnedLogoPath.Valid && returnedLogoPath.String != "" {
+		ws.LogoPath = &returnedLogoPath.String
+	}
+	ws.CreatedAt = createdAt.Format(time.RFC3339)
+	ws.UpdatedAt = updatedAt.Format(time.RFC3339)
+	r.withLogoURL(&ws)
+	return &ws, nil
+}
+
+func (r *Repository) ClearLogo(ctx context.Context, workspaceID uuid.UUID) (*model.Workspace, error) {
+	now := time.Now()
+	query := `
+		UPDATE workspaces SET
+			logo_path = NULL,
+			logo_scale = 1.0,
+			updated_at = $2
+		WHERE id = $1
+		RETURNING id, name, description, color, logo_path, logo_scale, owner_id, created_at, updated_at
+	`
+
+	var ws model.Workspace
+	var createdAt, updatedAt time.Time
+	var description sql.NullString
+	var returnedLogoPath sql.NullString
+
+	err := r.db.QueryRowContext(ctx, query, workspaceID, now).Scan(
+		&ws.ID,
+		&ws.Name,
+		&description,
+		&ws.Color,
+		&returnedLogoPath,
+		&ws.LogoScale,
+		&ws.OwnerID,
+		&createdAt,
+		&updatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to clear workspace logo: %w", err)
+	}
+
+	if description.Valid {
+		ws.Description = &description.String
+	}
+	if returnedLogoPath.Valid && returnedLogoPath.String != "" {
+		ws.LogoPath = &returnedLogoPath.String
+	} else {
+		ws.LogoPath = nil
+	}
+
+	ws.CreatedAt = createdAt.Format(time.RFC3339)
+	ws.UpdatedAt = updatedAt.Format(time.RFC3339)
+	r.withLogoURL(&ws)
 	return &ws, nil
 }
 
