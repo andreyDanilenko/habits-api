@@ -48,6 +48,23 @@ func (r *TelegramRepository) ConsumeLinkToken(ctx context.Context, tokenHash str
 	return userID, nil
 }
 
+// GetTelegramChatIDByUserID — chat_id для sendMessage, если пользователь привязал user-бота.
+func (r *TelegramRepository) GetTelegramChatIDByUserID(ctx context.Context, userID string) (string, error) {
+	var chatID string
+	err := r.db.QueryRowContext(ctx, `
+		SELECT telegram_chat_id
+		FROM telegram_user_links
+		WHERE user_id = $1::uuid AND is_enabled = TRUE
+	`, userID).Scan(&chatID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil
+		}
+		return "", fmt.Errorf("get telegram chat id: %w", err)
+	}
+	return chatID, nil
+}
+
 func (r *TelegramRepository) UpsertUserLink(
 	ctx context.Context,
 	userID, chatID, telegramUserID, telegramUsername string,
@@ -65,6 +82,18 @@ func (r *TelegramRepository) UpsertUserLink(
 	`, userID, chatID, telegramUserID, telegramUsername)
 	if err != nil {
 		return fmt.Errorf("upsert telegram user link: %w", err)
+	}
+	return nil
+}
+
+// DeleteUserLink — полное удаление связи пользователя с Telegram (без истории).
+func (r *TelegramRepository) DeleteUserLink(ctx context.Context, userID string) error {
+	_, err := r.db.ExecContext(ctx, `
+		DELETE FROM telegram_user_links
+		WHERE user_id = $1::uuid
+	`, userID)
+	if err != nil {
+		return fmt.Errorf("delete telegram user link: %w", err)
 	}
 	return nil
 }

@@ -229,6 +229,10 @@ func NewContainer(db *sql.DB, gormDB *gorm.DB, cfg *config.Config) (*Container, 
 	habitsSvc := habitsService.NewService(habitsRepository, activityRepository, activityWriter, workspaceRepository, rtPublisher)
 	habitsHdlr := habitsHandler.NewHandler(habitsSvc, responder, validate)
 
+	// Notifications (универсальный модуль: activity, chat, system)
+	notificationRepository := notificationRepo.NewRepository(db)
+	notificationSvc := notificationService.NewService(notificationRepository)
+
 	// Integrations (Telegram user bind: create link + confirm link)
 	integrationRepository := integrationRepo.NewRepository(db)
 	integrationHdlr := integrationHandler.NewHandler(
@@ -237,6 +241,7 @@ func NewContainer(db *sql.DB, gormDB *gorm.DB, cfg *config.Config) (*Container, 
 		cfg.Integrations.InternalAPIKey,
 		cfg.Telegram.UserBotUsername,
 		cfg.Integrations.TelegramLinkTokenTTL,
+		notificationSvc,
 	)
 
 	// Journal (no longer depends on habits)
@@ -259,9 +264,6 @@ func NewContainer(db *sql.DB, gormDB *gorm.DB, cfg *config.Config) (*Container, 
 
 	invitationHdlr := invitationHandler.NewHandler(invitationSvc, responder)
 
-	// Notifications (универсальный модуль: activity, chat, system)
-	notificationRepository := notificationRepo.NewRepository(db)
-	notificationSvc := notificationService.NewService(notificationRepository)
 	notificationHdlr := notificationHandler.NewHandler(notificationSvc, responder, validate)
 
 	return &Container{
