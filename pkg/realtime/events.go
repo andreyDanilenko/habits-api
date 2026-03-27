@@ -26,4 +26,8 @@ const (
 
 	// Invitations
 	EventInvitationAccepted = "invitation.accepted"
+
+	// Chat
+	EventChatMessageCreated  = "chat.message.created"
+	EventChatThreadUpserted  = "chat.thread.upserted"
 )

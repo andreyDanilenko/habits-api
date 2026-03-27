@@ -17,6 +17,7 @@ import (
 	notificationHandler "backend/internal/handler/notification"
 	permissionHandler "backend/internal/handler/permission"
 	projectHandler "backend/internal/handler/project"
+	chatHandler "backend/internal/handler/chat"
 	swaggerHandler "backend/internal/handler/swagger"
 	taskHandler "backend/internal/handler/task"
 	workspaceHandler "backend/internal/handler/workspace"
@@ -34,6 +35,7 @@ import (
 	notificationRepo "backend/internal/repository/notification"
 	permissionRepo "backend/internal/repository/permission"
 	projectRepo "backend/internal/repository/project"
+	chatRepo "backend/internal/repository/chat"
 	regTokenRepo "backend/internal/repository/registration_token"
 	taskRepo "backend/internal/repository/task"
 	userRepo "backend/internal/repository/user"
@@ -51,6 +53,7 @@ import (
 	notificationService "backend/internal/service/notification"
 	permissionService "backend/internal/service/permission"
 	projectService "backend/internal/service/project"
+	chatService "backend/internal/service/chat"
 	taskService "backend/internal/service/task"
 	workspaceService "backend/internal/service/workspace"
 	telegramInfra "backend/internal/telegram"
@@ -87,6 +90,7 @@ type Container struct {
 	TaskHandler         *taskHandler.Handler
 	NotificationHandler *notificationHandler.Handler
 	ProjectHandler      *projectHandler.Handler
+	ChatHandler         *chatHandler.Handler
 	HabitsHandler       *habitsHandler.Handler
 	IntegrationHandler  *integrationHandler.Handler
 	JournalHandler      *journalHandler.Handler
@@ -253,6 +257,11 @@ func NewContainer(db *sql.DB, gormDB *gorm.DB, cfg *config.Config) (*Container, 
 	projectSvc := projectService.NewService(projectRepository, workspaceSvc)
 	projectHdlr := projectHandler.NewHandler(projectSvc, responder, validate)
 
+	// Chat (workspace-scoped)
+	chatRepository := chatRepo.NewRepository(db)
+	chatSvc := chatService.NewService(chatRepository, workspaceSvc, rtPublisher)
+	chatHdlr := chatHandler.NewHandler(chatSvc, workspaceSvc, responder, validate)
+
 	// Logger
 	loggerHdlr := loggerHandler.NewHandler(logService, responder, validate)
 
@@ -280,6 +289,7 @@ func NewContainer(db *sql.DB, gormDB *gorm.DB, cfg *config.Config) (*Container, 
 		TaskHandler:         taskHdlr,
 		NotificationHandler: notificationHdlr,
 		ProjectHandler:      projectHdlr,
+		ChatHandler:         chatHdlr,
 		HabitsHandler:       habitsHdlr,
 		IntegrationHandler:  integrationHdlr,
 		JournalHandler:      journalHdlr,
@@ -344,6 +354,7 @@ func (c *Container) RegisterRoutes(r *router.Router) {
 	wsIDGroup := workspaceGroup.Group("/:workspaceId")
 	c.MasterHandler.RegisterRoutes(wsIDGroup)
 	c.ProjectHandler.RegisterRoutes(wsIDGroup)
+	c.ChatHandler.RegisterRoutes(wsIDGroup)
 	c.CrmHandler.RegisterRoutes(wsIDGroup)
 	c.NotesHandler.RegisterRoutes(wsIDGroup)
 	c.TaskHandler.RegisterRoutes(wsIDGroup)
